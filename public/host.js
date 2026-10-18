@@ -95,7 +95,7 @@ function sea(on){
   seaGain.gain.setTargetAtTime(0.32, actx.currentTime, 0.6);
   if (SFX['sea-loop']){
     if (seaSynth){ try { seaSynth.stop(); } catch(e){} seaSynth = null; }
-    if (!seaSrc){ seaSrc = actx.createBufferSource(); seaSrc.buffer = SFX['sea-loop']; seaSrc.loop = true; seaSrc.connect(seaGain); seaSrc.start(); }
+    if (!seaSrc){ seaSrc = actx.createBufferSource(); seaSrc.buffer = SFX['sea-loop']; seaSrc.loop = true; seaSrc.loopStart = 0.06; seaSrc.loopEnd = SFX['sea-loop'].duration - 0.06; seaSrc.connect(seaGain); seaSrc.start(); }
   } else if (!seaSynth){
     // soft brown-noise surf until the ElevenLabs loop is added
     const len = actx.sampleRate*4, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0); let last = 0;
