@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shark Bait</title>
+<link rel="preload" href="vendor/fonts/pirata-one-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="host.css">
+</head>
+<body>
+<canvas id="scene" aria-label="3D scene: pirate ship, Skull Island, plank and shark"></canvas>
+
+<section id="lobby">
+  <div class="logo"><h1>Shark <span>Bait</span></h1><p>Say it right… or feed the sharks</p></div>
+
+  <div id="joinCard" class="parch">
+    <h2>Join the crew!</h2>
+    <div class="join">
+      <img id="qr" alt="QR code to join from a phone">
+      <div class="code">Room code<b id="roomCode">····</b><small id="joinUrl">Connecting to the server…</small></div>
+    </div>
+  </div>
+
+  <div id="crewCard" class="parch">
+    <h3>Crew aboard <span id="crewCount">0</span></h3>
+    <div class="crew" id="crewChips"></div>
+    <p class="empty" id="crewEmpty">Scan the QR code with your phone to climb aboard.</p>
+  </div>
+
+  <div id="setCard" class="parch set">
+    <h3>Game settings</h3>
+    <div class="field">
+      <span class="lab">Level</span>
+      <div class="seg" id="lvlSeg" role="group" aria-label="Level"></div>
+      <small id="bankInfo"></small>
+    </div>
+    <div class="field"><label for="sN">Prisoners <output id="oN"></output></label><input type="range" id="sN" min="3" max="10" step="1"></div>
+    <div class="field"><label for="sT">Voting time <output id="oT"></output></label><input type="range" id="sT" min="10" max="60" step="5"></div>
+    <div class="field"><label for="sP">Score to be saved <output id="oP"></output></label><input type="range" id="sP" min="50" max="100" step="5"></div>
+    <div class="toggles">
+      <label><input type="checkbox" id="sCap"> Captain's intro</label>
+      <label><input type="checkbox" id="sSnd"> Sound</label>
+      <label><input type="checkbox" id="sRead"> Read aloud</label>
+      <label><input type="checkbox" id="sDemo"> Demo crew</label>
+    </div>
+    <button class="btn big" id="start" type="button" disabled>Loading ship…</button>
+    <p class="note" id="startNote">Waiting for the crew. With no phones, the demo crew votes.</p>
+  </div>
+</section>
+
+<div id="ui">
+  <header class="top" id="hud" hidden>
+    <div class="brand">Shark Bait</div>
+    <span class="pill lvl" id="hudLevel">A1</span>
+    <div id="track"></div>
+    <span class="pill" id="hudScore">0 saved · 0 overboard</span>
+    <span class="pill" id="hudCrew">0 crew</span>
+    <div class="ctrl">
+      <button class="btn" id="skip" type="button">Skip ▸</button>
+      <button class="btn" id="toLobby" type="button">Lobby</button>
+    </div>
+  </header>
+
+  <div id="meter" class="parch" hidden>
+    <div class="clock" id="clock">
+      <svg viewBox="0 0 80 80" aria-hidden="true"><circle class="bg" cx="40" cy="40" r="34"/><circle class="fg" id="ring" cx="40" cy="40" r="34" stroke-dasharray="213.6" stroke-dashoffset="0"/></svg>
+      <b id="secs">20</b>
+    </div>
+    <div class="mcol">
+      <div class="row"><span id="meterLabel">Vote on your phones!</span><span id="pct"></span></div>
+      <div class="bar"><div class="fill" id="fill"></div><div class="mark" id="mark"><span id="markLbl">80%</span></div></div>
+      <div id="votes">0 of 0 votes</div>
+    </div>
+  </div>
+
+  <div class="spacer"></div>
+  <section id="cards" hidden></section>
+  <section id="dialog" class="parch" hidden>
+    <div class="face" id="face">B</div>
+    <div><div class="who" id="who"></div><p class="line" id="line"></p></div>
+  </section>
+  <section id="summary" class="parch" hidden></section>
+</div>
+<div id="banner" hidden></div>
+<div id="toast" style="opacity:0"></div>
+
+<script src="vendor/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/SkeletonUtils.js"></script>
+<script src="vendor/qrcode.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="bank.js"></script>
+<script src="host.js"></script>
+</body>
+</html>

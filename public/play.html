@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#0b2a33">
+<title>Shark Bait — Crew</title>
+<link rel="stylesheet" href="play.css">
+</head>
+<body>
+<header class="bar">
+  <b class="brand">Shark Bait</b>
+  <span id="net" class="net">Connecting…</span>
+</header>
+
+<main>
+  <section id="sConnect" class="card">
+    <h1>Ahoy!</h1>
+    <p id="connectMsg">Connecting to the ship…</p>
+    <form id="codeForm" hidden>
+      <label for="codeIn">Room code on the big screen</label>
+      <input id="codeIn" autocomplete="off" autocapitalize="characters" maxlength="4" inputmode="text">
+      <button class="btn" type="submit">Board</button>
+    </form>
+  </section>
+
+  <section id="sJoin" class="card" hidden>
+    <h1>Pick your pirate</h1>
+    <div class="preview"><img id="pv" alt=""><span id="pvName">Pirate</span></div>
+    <label for="nameIn">Your name</label>
+    <input id="nameIn" maxlength="14" autocomplete="nickname" placeholder="Your name">
+    <div class="bases" id="bases" role="radiogroup" aria-label="Character"></div>
+    <div class="colors" id="colors" role="radiogroup" aria-label="Clothes color"></div>
+    <button class="btn big" id="joinBtn" type="button">Climb aboard!</button>
+  </section>
+
+  <section id="sWait" class="card" hidden>
+    <div class="me"><img id="meImg" alt=""><div><b id="meName"></b><small id="meScore"></small></div></div>
+    <h2 id="waitTitle">You're aboard!</h2>
+    <p id="waitMsg">Look at the big screen. Voting opens when a prisoner walks the plank.</p>
+    <ol id="preview" class="preview-list" hidden></ol>
+    <button class="btn ghost" id="editBtn" type="button">Change pirate</button>
+  </section>
+
+  <section id="sVote" class="card" hidden>
+    <div class="vhead"><div><small id="vNpc"></small><h2>Which one is proper English?</h2></div><b id="vClock" class="clock">20</b></div>
+    <div class="opts" id="opts"></div>
+    <p id="vMsg" class="hint">Tap your answer. You can change it until time runs out.</p>
+  </section>
+
+  <section id="sResult" class="card" hidden>
+    <div id="rIcon" class="ricon">✓</div>
+    <h2 id="rTitle"></h2>
+    <p id="rMsg"></p>
+    <p class="answer" id="rAnswer"></p>
+  </section>
+
+  <section id="sSummary" class="card" hidden>
+    <h1>Round over!</h1>
+    <div class="stats">
+      <div><b id="sumCorrect">0</b><span>right answers</span></div>
+      <div><b id="sumScore">0</b><span>points</span></div>
+      <div><b id="sumRank">–</b><span>place</span></div>
+    </div>
+    <p id="sumMsg"></p>
+  </section>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="play.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "shark-bait",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shark Bait — EFL pirate classroom game. Express + Socket.IO server for Render. Projector host screen + phones as controllers.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "PORT=3000 node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "compression": "^1.7.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
