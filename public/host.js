@@ -57,6 +57,8 @@ function unlockAudio(){
   sea(cfg.snd);
 }
 ['pointerdown','keydown'].forEach(ev => window.addEventListener(ev, unlockAudio, {passive:true}));
+// start downloading the sounds right away (the context stays suspended until the first click)
+try { unlockAudio(); } catch(e){}
 function playBuf(name, vol=1, rate=1){
   if (!cfg.snd || !actx || !SFX[name]) return false;
   const s = actx.createBufferSource(), g = actx.createGain(); s.buffer = SFX[name]; s.playbackRate.value = rate; g.gain.value = vol;
@@ -105,7 +107,8 @@ function sea(on){
   }
 }
 let capVoice = null;
-function captainLine(name){ if (capVoice){ try { capVoice.stop(); } catch(e){} } capVoice = playBuf(name, 1); return !!capVoice; }
+function stopCaptain(){ if (capVoice){ try { capVoice.stop(); } catch(e){} capVoice = null; } }
+function captainLine(name){ stopCaptain(); capVoice = playBuf(name, 1); return capVoice ? capVoice.buffer.duration : 0; }
 
 /* Read aloud (listening practice) with the browser's English voice */
 let enVoice = null;
@@ -691,13 +694,19 @@ function hideAll(keep=[]){ ['meter','cards','dialog','summary','banner'].forEach
 const voters = () => [...players.values()].filter(p => p.bot || (p.connected && p.sid));
 
 function enter(){
-  const ph = seq[si]; pt = 0; hush();
+  const ph = seq[si]; pt = 0; hush(); if (ph.id !== 'verdict') stopCaptain();
   const it = ph.npc != null ? round.items[ph.npc] : null;
   hideAll(ph.id === 'vote' || ph.id === 'verdict' ? ['cards'] : []);
   if (ph.id === 'captain'){
     const text = `Ahoy, crew! These landlubbers say they're innocent. Each one will tell three versions of their story, but only ONE is proper English. Vote wisely on yer phones! If at least ${cfg.pass}% of ye choose right, they live. If not... the sharks be hungry today!`;
     say('Captain Barbarossa', 'B', text); sfx.parrot();
-    if (!captainLine('captain-intro')) setTimeout(() => { if (seq[si] === ph) speak(text, {rate:0.95, pitch:0.7}); }, 600);
+    // the phase lasts as long as the captain talks: the first prisoner only walks out when he's done
+    const voiceLen = captainLine('captain-intro');
+    if (voiceLen) ph.dur = Math.max(ph.dur, voiceLen + 1.2);
+    else if (cfg.read && window.speechSynthesis){
+      ph.dur = 60;   // generous until the browser voice reports it finished
+      setTimeout(() => { if (seq[si] !== ph) return; const u = speak(text, {rate:0.95, pitch:0.7}); if (u) u.onend = () => { if (seq[si] === ph) ph.dur = pt + 1; }; else ph.dur = 13; }, 600);
+    }
   }
   if (ph.id === 'walk'){ const n = round.npcs[ph.npc]; n.mode = 'walk'; n.from = n.pos.clone(); say(`${it.who.name} the ${it.who.role}`, it.who.name[0], it.who.plea); speak(it.who.plea, {rate:1}); }
   if (ph.id === 'sentences'){
@@ -1013,5 +1022,5 @@ loadAll().then(() => {
   window.__ready = true;
 });
 window.__debug = { go(id, n){ const i = seq.findIndex(s => s.id === id && (n == null || s.npc === n)); if (i >= 0){ si = i; enter(); } }, round:() => round, players:() => players,
-  cam(a){ LOBBY_CAM.splice(0, 6, ...a); camPos.set(a[0], a[1], a[2]); camLook.set(a[3], a[4], a[5]); }, tick(sec){ for (let t=0; t<sec; t+=0.05) update(0.05); renderer.render(scene, camera); }, phase:() => seq[si] && seq[si].id };
+  cam(a){ LOBBY_CAM.splice(0, 6, ...a); camPos.set(a[0], a[1], a[2]); camLook.set(a[3], a[4], a[5]); }, tick(sec){ for (let t=0; t<sec; t+=0.05) update(0.05); renderer.render(scene, camera); }, phase:() => seq[si] && seq[si].id, dur:() => seq[si] && seq[si].dur };
 })();
