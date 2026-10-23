@@ -95,6 +95,20 @@ input[type=range]{width:100%;accent-color:var(--rope);height:26px}
 .fill{position:absolute;inset:0 auto 0 0;width:0;border-radius:999px;background:var(--blood);transition:width .3s, background .25s}
 .fill.pass{background:var(--ok)}
 .mark{position:absolute;top:-6px;bottom:-6px;width:3px;background:var(--ink)}
+/* danger zone (below the pass mark) and the skull at the end of the bar */
+.danger{position:absolute;inset:0 auto 0 0;width:0;border-radius:999px 0 0 999px;background:repeating-linear-gradient(-45deg,rgba(199,52,43,.28) 0 7px,rgba(199,52,43,.1) 7px 14px);transition:width .4s}
+#meter.judging .bar{margin-left:56px}
+.skull{position:absolute;left:-56px;top:50%;width:50px;height:50px;transform:translateY(-50%) rotate(-8deg);display:none;filter:drop-shadow(0 3px 0 rgba(42,22,11,.6));z-index:2}
+#meter.judging .skull{display:block;animation:rattle .12s linear infinite alternate}
+.skull .bone{fill:#f3ead2;stroke:var(--ink);stroke-width:3}
+.skull .hole{fill:var(--ink);stroke:var(--ink)}
+.skull .jaw{transform-origin:32px 50px}
+#meter.doomed .skull{animation:chomp .38s ease-in-out infinite;width:60px;height:60px;left:-62px}
+#meter.doomed .skull .hole{fill:#c7342b}
+#meter.doomed .skull .bone{fill:#fff4dc;stroke:#c7342b}
+#meter.spared .skull{animation:none;opacity:.35;filter:grayscale(1)}
+@keyframes rattle{from{transform:translateY(-50%) rotate(-10deg)}to{transform:translateY(-52%) rotate(6deg)}}
+@keyframes chomp{0%,100%{transform:translateY(-50%) rotate(-8deg) scale(1)}50%{transform:translateY(-58%) rotate(8deg) scale(1.18)}}
 .mark span{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:12px;font-weight:800;color:var(--ink)}
 #votes{font-size:14px;font-weight:700;color:var(--rope);font-variant-numeric:tabular-nums}
 #voteHint{font-family:var(--display);font-size:24px;color:var(--ink)}
@@ -146,4 +160,4 @@ input[type=range]{width:100%;accent-color:var(--rope);height:26px}
   #cards{grid-template-columns:1fr;gap:8px}
   #summary{grid-template-columns:1fr}
 }
-@media (prefers-reduced-motion: reduce){ #banner,.chip{animation:none} .card{transition:none} .clock.hurry b{animation:none} }
+@media (prefers-reduced-motion: reduce){ #banner,.chip,#meter .skull{animation:none!important} .card{transition:none} .clock.hurry b{animation:none} }

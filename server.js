@@ -24,6 +24,14 @@ app.use(compression());
 app.get('/healthz', (req, res) => {
   res.set('Cache-Control', 'no-store').json({ ok: true, uptime: Math.round((Date.now() - started) / 1000), rooms: rooms.size, sockets: io.engine.clientsCount });
 });
+// The host screen asks which sound files exist, so new takes dropped into public/assets/audio are picked up without code changes.
+const fs = require('fs');
+app.get('/assets/audio/index.json', (req, res) => {
+  fs.readdir(path.join(__dirname, 'public', 'assets', 'audio'), (err, files) => {
+    res.set('Cache-Control', 'no-cache');
+    res.json(err ? [] : files.filter(f => /\.mp3$/i.test(f)).sort());
+  });
+});
 app.get('/host', (req, res) => res.redirect('/'));
 app.get('/join', (req, res) => res.redirect('/play.html' + (req.query.room ? '?room=' + encodeURIComponent(String(req.query.room)) : '')));
 

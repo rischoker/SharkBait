@@ -41,85 +41,185 @@ $('lvlSeg').addEventListener('click', e => { const b = e.target.closest('button'
 }));
 renderSettings();
 
+let round = null, seq = [], si = 0, pt = 0, T = 0, playing = false, typer = null;   // round state (used by audio too)
 let toastT = 0;
 function toast(msg){ const t = $('toast'); t.textContent = msg; t.style.opacity = 1; clearTimeout(toastT); toastT = setTimeout(() => t.style.opacity = 0, 3200); }
 
-/* ---------- Audio: ElevenLabs files in assets/audio, synth fallback ---------- */
+/* ---------- Audio: ElevenLabs files in assets/audio (several takes per sound), synth fallback ---------- */
+// Every mp3 in assets/audio is listed by the server. "splash.mp3", "splash-2.mp3", "splash-3.mp3"… are takes of the same
+// sound: a random one plays each time, so games sound different. Optional files the game uses when present:
+// ahoy-m*.mp3 / ahoy-f*.mp3 (crew greeting), scream-m*.mp3 / scream-f*.mp3, count5.mp3 … count1.mp3 (captain countdown).
 let actx = null, master = null;
-const SFX = {};
-const SFX_NAMES = ['sea-loop','splash','bite','cheer','groan','parrot','fanfare','doom','bell','tick','captain-intro','captain-saved','captain-doom'];
+const SFX = {};                 // name -> [AudioBuffer, …]
+const lastPick = {};
+const FALLBACK_LIST = ['sea-loop','splash','bite','cheer','groan','parrot','fanfare','doom','bell','tick','captain-intro','captain-saved','captain-doom','lobby-song','ahoy-m'].map(n => n + '.mp3');
+function loadSounds(){
+  fetch('assets/audio/index.json', {cache:'no-cache'}).then(r => r.ok ? r.json() : Promise.reject()).catch(() => FALLBACK_LIST).then(list => list.forEach(f => {
+    const m = /^(.+?)(?:-(\d+))?\.mp3$/i.exec(f); if (!m) return;
+    fetch('assets/audio/' + encodeURIComponent(f)).then(r => r.ok ? r.arrayBuffer() : Promise.reject()).then(b => new Promise((ok, no) => actx.decodeAudioData(b, ok, no))).then(buf => {
+      (SFX[m[1]] = SFX[m[1]] || []).push(buf);
+      if (m[1] === 'sea-loop') sea(cfg.snd);
+      if (m[1] === 'lobby-song') music();
+    }).catch(() => {});
+  }));
+}
 function unlockAudio(){
   if (!actx){
     try { actx = new (window.AudioContext || window.webkitAudioContext)(); master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination); } catch(e){ return; }
-    SFX_NAMES.forEach(n => fetch(`assets/audio/${n}.mp3`).then(r => r.ok ? r.arrayBuffer() : Promise.reject()).then(b => actx.decodeAudioData(b)).then(buf => { SFX[n] = buf; if (n === 'sea-loop') sea(cfg.snd); }).catch(() => {}));
+    loadSounds();
   }
   if (actx.state === 'suspended') actx.resume();
-  sea(cfg.snd);
+  sea(cfg.snd); music();
 }
 ['pointerdown','keydown'].forEach(ev => window.addEventListener(ev, unlockAudio, {passive:true}));
 // start downloading the sounds right away (the context stays suspended until the first click)
 try { unlockAudio(); } catch(e){}
-function playBuf(name, vol=1, rate=1){
-  if (!cfg.snd || !actx || !SFX[name]) return false;
-  const s = actx.createBufferSource(), g = actx.createGain(); s.buffer = SFX[name]; s.playbackRate.value = rate; g.gain.value = vol;
-  s.connect(g).connect(master); s.start(); return s;
+const has = name => !!(SFX[name] && SFX[name].length);
+function pickBuf(name){
+  const list = SFX[name]; if (!list || !list.length) return null;
+  let k = Math.floor(Math.random()*list.length);
+  if (list.length > 1 && k === lastPick[name]) k = (k + 1) % list.length;   // never the same take twice in a row
+  lastPick[name] = k; return list[k];
+}
+function playBuf(name, vol=1, rate=1, when=0, buf=null){
+  if (!cfg.snd || !actx) return false;
+  buf = buf || pickBuf(name); if (!buf) return false;
+  const s = actx.createBufferSource(), g = actx.createGain(); s.buffer = buf; s.playbackRate.value = rate; g.gain.value = vol;
+  s.connect(g).connect(master); s.start(actx.currentTime + when); return s;
 }
 function beep(freq, dur, type='square', vol=0.06, when=0){
   if (!cfg.snd || !actx) return;
   const t = actx.currentTime + when, o = actx.createOscillator(), g = actx.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.02);
 }
-function noise(dur, cutoff, vol){
+function noise(dur, cutoff, vol, when=0, type='lowpass'){
   if (!cfg.snd || !actx) return;
-  const len = actx.sampleRate*dur, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
-  for (let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 2.5);
+  const len = Math.floor(actx.sampleRate*dur), buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i=0;i<len;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 2.5) * Math.min(1, i/200);
   const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
-  f.type = 'lowpass'; f.frequency.value = cutoff; g.gain.value = vol; s.buffer = buf; s.connect(f).connect(g).connect(master); s.start();
+  f.type = type; f.frequency.value = cutoff; g.gain.value = vol; s.buffer = buf; s.connect(f).connect(g).connect(master); s.start(actx.currentTime + when);
+}
+/* Cartoon scream: a sawtooth "Aaaaah!" through vowel formants, falling in pitch (used until scream-*.mp3 files exist) */
+function synthScream(fem, dur=1.6, when=0){
+  if (!cfg.snd || !actx) return;
+  const t = actx.currentTime + when, f0 = (fem ? 560 : 250) * (0.9 + Math.random()*0.2);
+  const o = actx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(f0*0.8, t); o.frequency.linearRampToValueAtTime(f0*1.4, t + 0.16);
+  o.frequency.setValueAtTime(f0*1.4, t + dur*0.35); o.frequency.exponentialRampToValueAtTime(f0*0.5, t + dur);
+  const lfo = actx.createOscillator(), lg = actx.createGain(); lfo.frequency.value = 6.5 + Math.random()*2; lg.gain.value = f0*0.06; lfo.connect(lg).connect(o.frequency);
+  const out = actx.createGain();
+  out.gain.setValueAtTime(0.0001, t); out.gain.exponentialRampToValueAtTime(0.5, t + 0.05);
+  out.gain.setValueAtTime(0.5, t + dur*0.6); out.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  const F = fem ? [[950,1,7],[1500,.55,9],[2900,.3,11]] : [[750,1,7],[1150,.6,9],[2500,.25,11]];
+  F.forEach(([f, gn, q]) => { const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q; const gg = actx.createGain(); gg.gain.value = gn*2.6; o.connect(bp).connect(gg).connect(out); });
+  out.connect(master); o.start(t); lfo.start(t); o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+  noise(dur*0.8, fem ? 3200 : 2400, 0.05, when, 'bandpass');
+}
+function gurgle(when=0){ // bubbles after the bite
+  if (!cfg.snd || !actx) return;
+  for (let i=0;i<9;i++){
+    const t = actx.currentTime + when + i*0.09 + Math.random()*0.05, o = actx.createOscillator(), g = actx.createGain(), f = 220 + Math.random()*260;
+    o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f*2.6, t + 0.07);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    o.connect(g).connect(master); o.start(t); o.stop(t + 0.1);
+  }
 }
 const sfx = {
-  splash: () => playBuf('splash', 0.9) || noise(0.7, 900, 0.5),
-  bite:   () => playBuf('bite', 0.9) || (beep(140, 0.12, 'square', 0.12), beep(90, 0.18, 'sawtooth', 0.1, 0.06)),
+  splash: () => playBuf('splash', 0.9, 0.95 + Math.random()*0.1) || noise(0.7, 900, 0.5),
+  bite:   () => playBuf('bite', 0.95) || (beep(140, 0.12, 'square', 0.12), beep(90, 0.18, 'sawtooth', 0.1, 0.06)),
   cheer:  () => playBuf('cheer', 0.8) || [523,659,784].forEach((f,i) => beep(f, 0.18, 'triangle', 0.05, i*0.08)),
   groan:  () => playBuf('groan', 0.8) || [330,294,262].forEach((f,i) => beep(f, 0.3, 'sawtooth', 0.03, i*0.15)),
-  parrot: () => playBuf('parrot', 0.7) || [1800,2300,1600].forEach((f,i) => beep(f, 0.07, 'sawtooth', 0.025, i*0.08)),
+  // Ernest the parrot: the same squawk at different pitches, sometimes twice
+  parrot: () => { const r = 0.85 + Math.random()*0.45; if (!playBuf('parrot', 0.7, r)) [1800,2300,1600].forEach((f,i) => beep(f*r, 0.07, 'sawtooth', 0.025, i*0.08)); else if (Math.random() < 0.4) playBuf('parrot', 0.55, r*1.12, 0.32); },
   fanfare:() => playBuf('fanfare', 0.8) || [523,659,784,1047].forEach((f,i) => beep(f, 0.22, 'triangle', 0.08, i*0.11)),
   doom:   () => playBuf('doom', 0.85) || [392,349,311,262].forEach((f,i) => beep(f, 0.35, 'sawtooth', 0.04, i*0.18)),
-  bell:   () => playBuf('bell', 0.6) || (beep(1320, 0.5, 'sine', 0.06), beep(1320, 0.5, 'sine', 0.05, 0.35)),
-  tick:   final => playBuf('tick', final ? 1 : 0.7, final ? 1.3 : 1) || beep(final ? 1320 : 880, 0.08),
+  bell:   () => playBuf('bell', 0.6) || beep(1320, 0.5, 'sine', 0.06),
+  // the countdown opens with a double clang
+  bell2:  () => { const b = pickBuf('bell'); if (b){ playBuf('bell', 0.65, 1, 0, b); playBuf('bell', 0.6, 0.97, 0.36, b); } else { beep(1320, 0.5, 'sine', 0.06); beep(1320, 0.5, 'sine', 0.05, 0.36); } },
+  tick:   final => playBuf('tick', final ? 0.8 : 0.5, final ? 1.3 : 1) || beep(final ? 1320 : 880, 0.08, 'square', 0.04),
+  scream: fem => playBuf(fem ? 'scream-f' : 'scream-m', 1, 0.95 + Math.random()*0.1) || synthScream(fem),
+  gurgle: () => gurgle(),
 };
 let seaSrc = null, seaGain = null, seaSynth = null;
 function sea(on){
   if (!actx) return;
   if (!on){ if (seaGain) seaGain.gain.setTargetAtTime(0, actx.currentTime, 0.4); return; }
   if (!seaGain){ seaGain = actx.createGain(); seaGain.gain.value = 0; seaGain.connect(master); }
-  seaGain.gain.setTargetAtTime(0.32, actx.currentTime, 0.6);
-  if (SFX['sea-loop']){
+  seaGain.gain.setTargetAtTime(playing ? 0.32 : 0.16, actx.currentTime, 0.6);
+  if (has('sea-loop')){
     if (seaSynth){ try { seaSynth.stop(); } catch(e){} seaSynth = null; }
-    if (!seaSrc){ seaSrc = actx.createBufferSource(); seaSrc.buffer = SFX['sea-loop']; seaSrc.loop = true; seaSrc.loopStart = 0.06; seaSrc.loopEnd = SFX['sea-loop'].duration - 0.06; seaSrc.connect(seaGain); seaSrc.start(); }
+    if (!seaSrc){ const b = SFX['sea-loop'][0]; seaSrc = actx.createBufferSource(); seaSrc.buffer = b; seaSrc.loop = true; seaSrc.loopStart = 0.06; seaSrc.loopEnd = b.duration - 0.06; seaSrc.connect(seaGain); seaSrc.start(); }
   } else if (!seaSynth){
-    // soft brown-noise surf until the ElevenLabs loop is added
+    // soft brown-noise surf until the ElevenLabs loop is loaded
     const len = actx.sampleRate*4, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0); let last = 0;
     for (let i=0;i<len;i++){ last = (last + 0.02*(Math.random()*2-1)) / 1.02; d[i] = last*3.2*(0.6 + 0.4*Math.sin(i/len*Math.PI*2)); }
     seaSynth = actx.createBufferSource(); seaSynth.buffer = buf; seaSynth.loop = true;
     const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 700; seaSynth.connect(f).connect(seaGain); seaSynth.start();
   }
 }
+/* Lobby song: loops while the crew gathers, fades out when the ship sets sail */
+let songSrc = null, songGain = null;
+function music(){
+  if (!actx || !has('lobby-song')) return;
+  const want = cfg.snd && !playing;
+  if (!songGain){ songGain = actx.createGain(); songGain.gain.value = 0; songGain.connect(master); }
+  if (want && !songSrc && actx.state === 'running'){
+    songSrc = actx.createBufferSource(); songSrc.buffer = SFX['lobby-song'][0]; songSrc.loop = true; songSrc.connect(songGain); songSrc.start();
+  }
+  songGain.gain.cancelScheduledValues(actx.currentTime);
+  songGain.gain.setTargetAtTime(want ? 0.42 : 0, actx.currentTime, want ? 0.8 : 0.6);
+  if (!want && songSrc){ const s = songSrc; songSrc = null; setTimeout(() => { try { s.stop(); } catch(e){} }, 4000); }
+}
 let capVoice = null;
 function stopCaptain(){ if (capVoice){ try { capVoice.stop(); } catch(e){} capVoice = null; } }
-function captainLine(name){ stopCaptain(); capVoice = playBuf(name, 1); return capVoice ? capVoice.buffer.duration : 0; }
+function captainLine(name, buf){ stopCaptain(); capVoice = playBuf(name, 1, 1, 0, buf); return capVoice ? capVoice.buffer.duration : 0; }
 
-/* Read aloud (listening practice) with the browser's English voice */
-let enVoice = null;
-function pickVoice(){ const vs = (window.speechSynthesis && speechSynthesis.getVoices()) || []; enVoice = vs.find(v => /en[-_](US|GB)/i.test(v.lang) && /natural|google|samantha|daniel|aria|jenny/i.test(v.name)) || vs.find(v => /^en/i.test(v.lang)) || null; }
-if (window.speechSynthesis){ pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function speak(text, opts={}){
-  if (!cfg.read || !window.speechSynthesis) return null;
-  const u = new SpeechSynthesisUtterance(text); if (enVoice) u.voice = enVoice; u.lang = enVoice ? enVoice.lang : 'en-US';
-  u.rate = opts.rate || 0.92; u.pitch = opts.pitch || 1; if (opts.onstart) u.onstart = opts.onstart; speechSynthesis.speak(u); return u;
+/* Browser voices (read aloud, prisoners, fallbacks). Women prisoners get a female voice, men a male one. */
+const VOICES = {any:null, f:null, m:null};
+const isFemaleVoice = v => /female|zira|aria|jenny|michelle|samantha|susan|hazel|libby|sonia|emma|karen|moira|tessa|victoria|fiona|serena|ava|allison|natasha|clara|google us english/i.test(v.name);
+const isMaleVoice = v => !isFemaleVoice(v) && /\bmale|david|guy|mark|daniel|george|ryan|alex|fred|thomas|arthur|christopher|eric|roger|brian|andrew|william|liam|oliver/i.test(v.name);
+function pickVoices(){
+  const vs = ((window.speechSynthesis && speechSynthesis.getVoices()) || []).filter(v => /^en/i.test(v.lang));
+  const rank = v => (/natural|online|neural/i.test(v.name) ? 0 : 2) + (/en[-_](US|GB)/i.test(v.lang) ? 0 : 1) + (v.localService ? 0 : 0.5);
+  const best = list => list.slice().sort((a, b) => rank(a) - rank(b))[0] || null;
+  VOICES.f = best(vs.filter(isFemaleVoice)); VOICES.m = best(vs.filter(isMaleVoice));
+  VOICES.any = vs.find(v => /en[-_](US|GB)/i.test(v.lang) && /natural|google|samantha|daniel|aria|jenny/i.test(v.name)) || vs[0] || null;
 }
+if (window.speechSynthesis){ pickVoices(); speechSynthesis.onvoiceschanged = pickVoices; }
+// gender 'f' / 'm' picks a voice; when the computer only has one voice, the pitch still tells them apart
+function utter(text, opts={}){
+  if (!window.speechSynthesis) return null;
+  const u = new SpeechSynthesisUtterance(text);
+  const v = (opts.g && VOICES[opts.g]) || VOICES.any;
+  if (v){ u.voice = v; u.lang = v.lang; } else u.lang = 'en-US';
+  const sameVoice = opts.g && !VOICES[opts.g];
+  u.rate = opts.rate || 0.92;
+  u.pitch = Math.max(0.1, Math.min(2, (opts.pitch || 1) * (sameVoice ? (opts.g === 'f' ? 1.35 : 0.7) : 1)));
+  u.volume = opts.volume == null ? 1 : opts.volume;
+  if (opts.onstart) u.onstart = opts.onstart;
+  speechSynthesis.speak(u); return u;
+}
+function speak(text, opts={}){ return cfg.read ? utter(text, opts) : null; }          // listening practice (setting)
+function shout(text, opts={}){ return cfg.snd ? utter(text, opts) : null; }           // sound effects made of words
 function hush(){ try { window.speechSynthesis && speechSynthesis.cancel(); } catch(e){} }
+// Captain's countdown: count5.mp3 … count1.mp3 if present, otherwise a deep browser voice
+const COUNT_WORDS = ['', 'One!', 'Two!', 'Three!', 'Four!', 'Five!'];
+function countdown(n){
+  if (playBuf('count' + n, 1)) return;
+  if (cfg.snd && window.speechSynthesis){ speechSynthesis.cancel(); utter(COUNT_WORDS[n], {g:'m', pitch:0.55, rate:1.15}); }
+}
+// "Ahoy!" when a pirate joins or taps the button on the phone
+let lastAhoy = 0;
+function ahoy(p){
+  const now = performance.now(); if (now - lastAhoy < 450) return; lastAhoy = now;
+  const fem = p.voice === 'f';
+  const rate = fem ? 0.95 + Math.random()*0.15 : 1.0 + ((p.color * 37 + p.name.length * 13) % 25) / 100;
+  if (playBuf(fem ? 'ahoy-f' : 'ahoy-m', 1, rate)) return;
+  const lines = ['Ahoy!', 'Ahoy there!', 'Ahoy, matey!'];
+  if (cfg.snd && window.speechSynthesis){ utter(lines[Math.floor(Math.random()*lines.length)], {g:fem ? 'f' : 'm', pitch:fem ? 1.15 : 0.85 + Math.random()*0.2, rate:1.05}); }
+}
 
 /* ---------- Three.js ---------- */
 const canvas = $('scene');
@@ -168,16 +268,27 @@ const WAVES = [ // dirX, dirZ, amplitude, k (2π/λ), speed
   [ 0.20,  0.98, 0.05, 2.70, 3.40],
 ];
 function waveHeight(x, z, t){ let h = 0; for (const [dx,dz,a,k,s] of WAVES) h += a*Math.sin((dx*x + dz*z)*k + t*s); return h; }
-const SHIP_FOAM = new THREE.Vector4(-1.8, 0, 17.5, 6.6); // center x,z, half length, half width
-const ISLES = [];
+const SHIP_FOAM = new THREE.Vector4(-1.8, 0, 17.5, 6.6); // wake: center x,z, half length, half width
+const HULL = new THREE.Vector4(0, 0, 11.6, 4.9);          // hull at the waterline: no water inside it, calm water around it
+const ISLES = [];                                          // x, z, radius x, radius z of each island's sand
+// Waves calm down next to the hull and the beaches, and the sea sits a little lower there, so it never floods them.
+function shoreDamp(x, z){
+  let d = 1;
+  const hx = (x - HULL.x)/HULL.z, hz = (z - HULL.y)/HULL.w;
+  d = Math.min(d, 0.22 + 0.78*smooth(1.0, 1.7, Math.sqrt(hx*hx + hz*hz)));
+  for (const [ix, iz, rx, rz] of ISLES){ const ex = (x - ix)/rx, ez = (z - iz)/rz; d = Math.min(d, 0.2 + 0.8*smooth(1.0, 1.5, Math.sqrt(ex*ex + ez*ez))); }
+  return d;
+}
+function smooth(a, b, x){ const t = Math.min(1, Math.max(0, (x - a)/(b - a))); return t*t*(3 - 2*t); }
+function seaLevel(x, z, t){ const d = shoreDamp(x, z); return waveHeight(x, z, t)*d - (1 - d)*0.3; }
 const seaMat = new THREE.ShaderMaterial({
   uniforms:{
     uTime:{value:0}, uDeep:{value:C(0x064c62)}, uShallow:{value:C(0x17b3bf)}, uSky:{value:C(0xbfeef2)}, uFoam:{value:C(0xf4ffff)},
-    uSun:{value:SUN_DIR}, uFog:{value:FOG}, uFogNear:{value:110}, uFogFar:{value:420}, uShip:{value:SHIP_FOAM},
-    uIsles:{value:[0,1,2,3,4].map(() => new THREE.Vector4(0,0,0,0))},
+    uSun:{value:SUN_DIR}, uFog:{value:FOG}, uFogNear:{value:110}, uFogFar:{value:420}, uShip:{value:SHIP_FOAM}, uHull:{value:HULL},
+    uIsles:{value:[0,1,2,3,4,5].map(() => new THREE.Vector4(0,0,0,0))},
   },
   vertexShader:`
-    uniform float uTime;
+    uniform float uTime; uniform vec4 uHull; uniform vec4 uIsles[6];
     varying vec3 vWorld; varying vec3 vNormal; varying float vH;
     void wave(vec2 p, float dx, float dz, float a, float k, float s, inout float h, inout vec2 d){
       float ph = (dx*p.x + dz*p.y)*k + uTime*s; h += a*sin(ph); float c = a*k*cos(ph); d += vec2(dx*c, dz*c);
@@ -186,12 +297,15 @@ const seaMat = new THREE.ShaderMaterial({
       vec4 w = modelMatrix * vec4(position, 1.0);
       float h = 0.0; vec2 d = vec2(0.0);
       ${WAVES.map(([dx,dz,a,k,s]) => `wave(w.xz, ${dx.toFixed(3)}, ${dz.toFixed(3)}, ${a.toFixed(3)}, ${k.toFixed(3)}, ${s.toFixed(3)}, h, d);`).join('\n      ')}
-      w.y += h; vH = h; vWorld = w.xyz; vNormal = normalize(vec3(-d.x, 1.0, -d.y));
+      float damp = 0.22 + 0.78*smoothstep(1.0, 1.7, length((w.xz - uHull.xy)/uHull.zw));
+      for (int i = 0; i < 6; i++){ if (uIsles[i].z <= 0.0) continue; damp = min(damp, 0.2 + 0.8*smoothstep(1.0, 1.5, length((w.xz - uIsles[i].xy)/uIsles[i].zw))); }
+      h *= damp; d *= damp;
+      w.y += h - (1.0 - damp)*0.3; vH = h; vWorld = w.xyz; vNormal = normalize(vec3(-d.x, 1.0, -d.y));
       gl_Position = projectionMatrix * viewMatrix * w;
     }`,
   fragmentShader:`
     uniform float uTime; uniform vec3 uDeep, uShallow, uSky, uFoam, uSun, uFog; uniform float uFogNear, uFogFar;
-    uniform vec4 uShip; uniform vec4 uIsles[5];
+    uniform vec4 uShip; uniform vec4 uHull; uniform vec4 uIsles[6];
     varying vec3 vWorld; varying vec3 vNormal; varying float vH;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
@@ -199,6 +313,7 @@ const seaMat = new THREE.ShaderMaterial({
     float fbm(vec2 p){ return vnoise(p)*0.55 + vnoise(p*2.1+7.3)*0.3 + vnoise(p*4.3-2.1)*0.15; }
     void main(){
       vec2 p = vWorld.xz;
+      if (length((p - uHull.xy)/uHull.zw) < 1.0) discard;   // no sea inside the hull
       float n1 = fbm(p*0.32 + vec2(uTime*0.11, uTime*0.07));
       float n2 = fbm(p*0.32 + vec2(0.37, 0.0) + vec2(uTime*0.11, uTime*0.07));
       float n3 = fbm(p*0.32 + vec2(0.0, 0.37) + vec2(uTime*0.11, uTime*0.07));
@@ -215,10 +330,12 @@ const seaMat = new THREE.ShaderMaterial({
       float e = length(q);
       foam += smoothstep(1.22, 1.02, e) * smoothstep(0.85, 1.02, e) * smoothstep(0.35, 0.75, vnoise(p*1.4 + uTime*0.9)) * 0.75;
       // surf rings around islands
-      for (int i = 0; i < 5; i++){
+      for (int i = 0; i < 6; i++){
         if (uIsles[i].z <= 0.0) continue;
-        float dd = length(p - uIsles[i].xy) - uIsles[i].z;
-        float ring = smoothstep(4.5, 0.0, dd) * smoothstep(-1.5, 0.3, dd);
+        vec2 rel = (p - uIsles[i].xy) / uIsles[i].zw;
+        float dd = (length(rel) - 1.0) * min(uIsles[i].z, uIsles[i].w);
+        if (dd < -0.8) discard;                                  // under the sand: no sea poking through
+        float ring = smoothstep(4.0, 0.0, dd) * smoothstep(-0.8, 0.6, dd);
         float lap = 0.5 + 0.5*sin(dd*1.6 - uTime*2.2 + n1*4.0);
         foam += ring * (0.35 + 0.65*lap) * (0.6 + 0.4*vnoise(p*0.9 + uTime*0.4));
         col = mix(col, uShallow*1.25, smoothstep(9.0, 0.0, dd) * 0.55);
@@ -232,7 +349,7 @@ const seaMat = new THREE.ShaderMaterial({
 });
 const ocean = new THREE.Mesh(new THREE.PlaneGeometry(900, 900, 220, 220).rotateX(-Math.PI/2), seaMat);
 scene.add(ocean);
-function addIsle(x, z, r){ const i = ISLES.length; if (i < 5){ seaMat.uniforms.uIsles.value[i].set(x, z, r, 0); ISLES.push([x,z,r]); } }
+function addIsle(x, z, rx, rz=rx){ const i = ISLES.length; if (i < 6){ seaMat.uniforms.uIsles.value[i].set(x, z, rx, rz); ISLES.push([x, z, rx, rz]); } }
 
 /* ---------- Models ---------- */
 const gltf = new THREE.GLTFLoader();
@@ -359,9 +476,9 @@ const CAP_POS = new THREE.Vector3(10.0, QUARTER, 0);
 const SKULL_ISLE = new THREE.Vector3(-46, 0, -120);
 const SAND_Y = 0.62;
 let captain = null, navy = null, flag = null, flagGeo = null, flagBase = null;
-const shark = new THREE.Group(), sharkPitch = new THREE.Group(); shark.add(sharkPitch); scene.add(shark);
-shark.userData = {a:0, mode:'circle', s:0};
-let sharkActor = null;
+// Three sharks circle the plank. sharks[0] leaps for the prisoner, the other two join the feeding frenzy.
+const sharks = [];
+const SHARK_RINGS = [[3.4, 0.7, 0, 1.0], [6.2, -0.48, 2.3, 0.9], [9.0, 0.36, 4.4, 1.12]];   // radius, turn speed, start angle, size
 
 function sandIsland(r){
   const g = new THREE.Group();
@@ -414,7 +531,7 @@ function buildSkullIsland(){
   if (sk){ g.add(sk); g.updateMatrixWorld(true); sk.lookAt(SKULL_ISLE.x + 4, 6, SKULL_ISLE.z + 60); }
   [['palm-tree', 14, 0.9, 12, 2.6, 0.4], ['palm2', -14, 0.9, 14, 2.8, 2], ['palm3', 18, 0.9, -2, 2.4, 1], ['palm2', -20, 0.9, -4, 2.2, 3]]
     .forEach(([n,x,y,z,s,r]) => { const o = inst(n,x,y,z,s,r); if (o) g.add(o); });
-  addIsle(SKULL_ISLE.x, SKULL_ISLE.z, 24*1.25); addIsle(SKULL_ISLE.x, SKULL_ISLE.z + 27, 15*1.25);
+  addIsle(SKULL_ISLE.x, SKULL_ISLE.z, 24); addIsle(SKULL_ISLE.x, SKULL_ISLE.z + 27, 15*1.35, 15*0.75);
   // giant flag on a mast behind the skull
   const poleX = -24, poleZ = -10, poleH = 48;
   g.add(mesh(new THREE.CylinderGeometry(0.7, 1.0, poleH, 8), M(0x5a341a), poleX, poleH/2, poleZ));
@@ -450,18 +567,18 @@ function buildWorld(){
 
   skullIsle = buildSkullIsland();
   // pirate port
-  const port = sandIsland(26); port.position.set(70, 0, -150); scene.add(port); addIsle(70, -150, 26*1.25);
+  const port = sandIsland(26); port.position.set(70, 0, -150); scene.add(port); addIsle(70, -150, 26);
   [['house3', -6, 0.9, -4, 1.5, 0.3], ['house2', 9, 0.9, -8, 1.4, -0.2], ['house', -16, 0.9, 6, 1.4, 0.8], ['palm-tree', 12, 0.9, 8, 2.2, 1], ['palm2', 4, 0.9, 12, 2.4, 2],
    ['palm3', -14, 0.9, -12, 2.3, 0.4], ['palm-tree', 18, 0.9, -2, 2.0, 2.5], ['barrel', 2, 0.9, 6, 1.5, 0], ['chest-gold', -2, 0.9, 9, 1.3, 0.7]]
     .forEach(([n,x,y,z,s,r]) => { const o = inst(n,x,y,z,s,r); if (o) port.add(o); });
   for (let i=0;i<5;i++){ const d = inst(i === 3 ? 'dock-broken' : 'dock', 6 + i*2.6*1.4, 0.4, 25, 1.4, 0); if (d) port.add(d); }
   const boat = inst('small-ship', 16, -0.2, 31, 1.8, 0.2); if (boat) port.add(boat);
   // bone island
-  const bones = sandIsland(14); bones.position.set(140, 0, -40); scene.add(bones); addIsle(140, -40, 14*1.25);
+  const bones = sandIsland(14); bones.position.set(140, 0, -40); scene.add(bones); addIsle(140, -40, 14);
   [['palm2', -4, 0.9, -3, 2.4, 0], ['palm-tree', 5, 0.9, 2, 2.2, 1.4], ['large-bone', 1, 0.9, -6, 1.2, 0.5], ['red-x', 2, 1.0, 6, 2, 0]]
     .forEach(([n,x,y,z,s,r]) => { const o = inst(n,x,y,z,s,r); if (o) bones.add(o); });
   // rocky islet
-  const rocky = sandIsland(12); rocky.position.set(-170, 0, 30); scene.add(rocky); addIsle(-170, 30, 12*1.25);
+  const rocky = sandIsland(12); rocky.position.set(-170, 0, 30); scene.add(rocky); addIsle(-170, 30, 12);
   [['bigrock2', 0, 0, 0, 2.2, 0.4], ['palm3', 6, 0.9, 5, 2.2, 0], ['palm-tree', -7, 0.9, 6, 2.0, 2]]
     .forEach(([n,x,y,z,s,r]) => { const o = inst(n,x,y,z,s,r); if (o) rocky.add(o); });
   [['bigrock1', 45, -64, 1.8], ['bigrock3', -55, 60, 1.6], ['bigrock2', 120, 60, 2.2], ['bigrock1', -100, -60, 1.3]]
@@ -470,12 +587,15 @@ function buildWorld(){
   navy = inst('ship', -200, -1.2, -230, 2.6, Math.PI/2);
   if (navy){ navy.traverse(o => { if (o.isMesh){ o.material = o.material.clone(); o.material.side = THREE.DoubleSide; } }); scene.add(navy); }
 
-  if (G.shark){
-    const model = G.shark.scene; sharkPitch.add(model);
-    const mx = new THREE.AnimationMixer(model); mixers.push(mx);
+  if (G.shark) SHARK_RINGS.forEach((ring, i) => {
+    const g = new THREE.Group(), pitch = new THREE.Group(); g.add(pitch); scene.add(g);
+    const model = i === 0 ? G.shark.scene : THREE.SkeletonUtils.clone(G.shark.scene);
+    model.scale.multiplyScalar(ring[3]); pitch.add(model);
+    const mx = new THREE.AnimationMixer(model); mixers.push(mx); mx.timeScale = 0.85 + i*0.15;
     const acts = {}; ['Swim','Swim_Fast','Swim_Bite'].forEach(n => { const c = G.shark.animations.find(a => a.name.split('|')[3] === n); if (c) acts[n] = mx.clipAction(c); });
-    sharkActor = {mixer:mx, actions:acts, cur:null}; play(sharkActor, 'Swim');
-  }
+    const s = {g, pitch, actor:{mixer:mx, actions:acts, cur:null}, mode:'circle', a:ring[2], r:ring[0], w:ring[1], s:0, pos:new THREE.Vector3(), yaw:0, target:new THREE.Vector3()};
+    play(s.actor, 'Swim'); sharks.push(s);
+  });
   captain = makeActor('captain', {label:'Captain Barbarossa', labelColor:'#f0b43a', scale:CHAR_S*1.15});
   if (captain){ captain.g.position.copy(CAP_POS); ship.add(captain.g); }
 }
@@ -485,8 +605,24 @@ const CREW_SPOTS = [];
 for (const z of [-2.9, -2.1, -1.3]) for (let i=0;i<7;i++) CREW_SPOTS.push(new THREE.Vector3(-1.0 + i*1.15, DECK, z + (i%2)*0.15));
 for (const z of [-1.5, -0.4]) for (let i=0;i<4;i++) CREW_SPOTS.push(new THREE.Vector3(-5.3 - i*1.2, FORE, z));
 for (let i=0;i<5;i++) CREW_SPOTS.push(new THREE.Vector3(11.9, QUARTER, -2.4 + i*1.2));
-const BEACH_SPOTS = [];
-for (let r=0;r<5;r++){ const n = 8; for (let i=0;i<n;i++) BEACH_SPOTS.push(new THREE.Vector3(SKULL_ISLE.x + (i - (n-1)/2)*2.1 + (r%2)*0.9, SAND_Y, SKULL_ISLE.z + 34 - r*2.8)); }
+// Lobby: the crew stands centered on the beach, big for small groups and smaller as more pirates join.
+const BEACH_C = new THREE.Vector3(SKULL_ISLE.x + 3.2, SAND_Y, SKULL_ISLE.z + 31);   // middle of the free space between the panels
+const BEACH_W = 13;                                                                  // width the front row may use
+function beachLayout(){
+  const list = [...players.values()].sort((a, b) => a.joinN - b.joinN), n = list.length;
+  const sc = n <= 3 ? 3.0 : n <= 6 ? 2.6 : n <= 10 ? 2.0 : n <= 18 ? 1.6 : n <= 28 ? 1.3 : 1.05;
+  const gap = 1.3*sc + 0.35;
+  const perMax = Math.max(1, Math.floor(BEACH_W / gap) + 1);
+  const rows = Math.ceil(n / perMax), per = Math.ceil(n / Math.max(1, rows));
+  const out = new Map();
+  list.forEach((p, i) => {
+    const r = Math.floor(i / per), c = i % per, inRow = Math.min(per, n - r*per);
+    const rowGap = gap * (r % 2 ? 1 : 1);
+    out.set(p, {pos:new THREE.Vector3(BEACH_C.x + (c - (inRow - 1)/2)*rowGap + (r % 2)*gap*0.5*(inRow === per ? 1 : 0), SAND_Y, BEACH_C.z - (rows > 1 ? 2 : 0) - r*(2.4*sc + 1.2)), scale:sc});
+  });
+  return out;
+}
+let beach = new Map();
 const queueSlot = j => j < 4 ? new THREE.Vector3(0.6 - j*1.2, DECK, 2.3) : new THREE.Vector3(-5.0 - (j-4)*1.2, FORE, 1.5);
 const rescueSpot = k => k < 6 ? new THREE.Vector3(8.0, QUARTER, -2.6 + k*1.05) : new THREE.Vector3(9.0, QUARTER, -2.0 + (k-6)*1.3);
 function shuffle(a){ for (let i=a.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
@@ -511,14 +647,15 @@ function spawnActor(p, drop=true){
 }
 // Lobby: the crew gathers on the Skull Island beach. In game: on the ship's deck.
 function onBeach(){ const ph = playing ? seq[si] : null; return !ph || (ph.id === 'approach' && pt < 1.4); }
-function spotOf(p){ return onBeach() ? BEACH_SPOTS[p.spot % BEACH_SPOTS.length] : CREW_SPOTS[p.spot % CREW_SPOTS.length]; }
+function spotOf(p){ if (onBeach()){ const b = beach.get(p); return b ? b.pos : BEACH_C; } return CREW_SPOTS[p.spot % CREW_SPOTS.length]; }
 function placeActor(p){
   if (!p.actor) return;
   const where = onBeach() ? 'beach' : 'ship';
   if (p.where === where) return;
   p.where = where; (where === 'beach' ? scene : ship).add(p.actor.g);
-  const pl = p.actor.g.userData.plate; if (pl) pl.scale.set(where === 'beach' ? 3.0 : 2.1, where === 'beach' ? 0.6 : 0.42, 1);
-  p.actor.g.position.copy(spotOf(p));
+  if (where === 'ship'){ p.actor.g.scale.setScalar(1); p.size = 1; const pl = p.actor.g.userData.plate; if (pl){ pl.scale.set(2.1, 0.42, 1); pl.position.y = 1.6*CHAR_S + 0.45; } }
+  else { const b = beach.get(p); p.size = b ? b.scale : 2; p.actor.g.scale.setScalar(p.size); }
+  p.actor.g.position.copy(spotOf(p)); p.beachPos = spotOf(p).clone();
   if (where === 'ship') burst(new THREE.Vector3(CREW_SPOTS[p.spot % CREW_SPOTS.length].x, DECK + 1, CREW_SPOTS[p.spot % CREW_SPOTS.length].z), 6, [0xffffff, 0xf0b43a], {confetti:true, spread:1, up:2, g:5, life:0.9});
 }
 function addPlayer(id, info, isBot=false){
@@ -526,14 +663,37 @@ function addPlayer(id, info, isBot=false){
   const name = cleanName(info.name), base = CHAR_BASES.includes(info.base) ? info.base : CHAR_BASES[Math.floor(Math.random()*CHAR_BASES.length)];
   const color = Math.max(0, Math.min(VARIANTS.length - 1, Math.floor(+info.color || 0)));
   const isNew = !p;
-  if (!p){ p = {id, sid:null, bot:isBot, name, base, color, connected:true, actor:null, spot:freeSpot(), score:0, correct:0, answered:0, vote:null, voteT:0, awayT:0}; players.set(id, p); }
+  const voice = info.voice === 'f' || info.voice === 'm' ? info.voice : (base === 'anne' ? 'f' : 'm');
+  if (!p){ p = {id, sid:null, bot:isBot, name, base, color, voice, connected:true, actor:null, spot:freeSpot(), joinN:++joinCounter, score:0, correct:0, answered:0, vote:null, voteT:0, awayT:0, picks:[]}; players.set(id, p); }
   const changed = p.name !== name || p.base !== base || p.color !== color;
-  Object.assign(p, {name, base, color, connected:true});
-  if (isNew || changed || !p.actor) { spawnActor(p, isNew); if (isNew && !isBot){ sfx.bell(); } }
+  Object.assign(p, {name, base, color, voice, connected:true});
+  beach = beachLayout();
+  if (isNew || changed || !p.actor) { spawnActor(p, isNew); if (isNew && !isBot) setTimeout(() => sayAhoy(p), 500); }
   renderCrew();
   return p;
 }
-function removePlayer(p){ disposeActor(p.actor); players.delete(p.id); renderCrew(); }
+let joinCounter = 0;
+// "Ahoy!" speech bubble over a pirate (one shared texture)
+let bubbleTex = null;
+function ahoyBubble(){
+  if (!bubbleTex){
+    const c = document.createElement('canvas'); c.width = 256; c.height = 128; const x = c.getContext('2d');
+    x.fillStyle = '#fff8e6'; x.strokeStyle = '#2a160b'; x.lineWidth = 8;
+    x.beginPath(); x.ellipse(128, 54, 116, 46, 0, 0, Math.PI*2); x.fill(); x.stroke();
+    x.beginPath(); x.moveTo(98, 94); x.lineTo(82, 124); x.lineTo(124, 98); x.closePath(); x.fill(); x.stroke();
+    x.fillStyle = '#fff8e6'; x.beginPath(); x.ellipse(128, 54, 110, 40, 0, 0, Math.PI*2); x.fill();
+    x.fillStyle = '#c7342b'; x.font = '400 64px "Pirata One", Georgia, serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('Ahoy!', 128, 56);
+    bubbleTex = new THREE.CanvasTexture(c); bubbleTex.encoding = THREE.sRGBEncoding;
+  }
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({map:bubbleTex, depthTest:false, transparent:true}));
+  s.scale.set(1.5, 0.75, 1); s.renderOrder = 21; s.visible = false; return s;
+}
+function sayAhoy(p){
+  if (!p.actor) return;
+  if (!p.actor.g.userData.bubble){ const b = ahoyBubble(); b.position.set(0.9, 1.6*CHAR_S + 1.15, 0); p.actor.g.add(b); p.actor.g.userData.bubble = b; }
+  p.ahoyT = T; ahoy(p);
+}
+function removePlayer(p){ disposeActor(p.actor); players.delete(p.id); beach = beachLayout(); renderCrew(); }
 function syncDemoCrew(){
   const humans = [...players.values()].filter(p => !p.bot).length;
   const wantBots = cfg.demo;
@@ -610,6 +770,11 @@ socket.on('h:d', ({sid, d}) => {
     const pick = Math.floor(+d.pick); if (!(pick >= 0 && pick <= 2)) return;
     p.vote = pick; p.voteT = pt;
     send(sid, {type:'voted', pick});
+  } else if (d.type === 'ahoy'){
+    const p = players.get(bySid.get(sid)); if (!p) return;
+    if (p.ahoyT != null && T - p.ahoyT < 2.5) return;          // one greeting every few seconds per pirate
+    if (d.voice === 'f' || d.voice === 'm') p.voice = d.voice;
+    sayAhoy(p);
   } else if (d.type === 'ping'){ /* keepalive */ }
 });
 function syncBotsForHumans(){ if (!cfg.demo) for (const p of [...players.values()]) if (p.bot) removePlayer(p); }
@@ -636,10 +801,9 @@ function stateFor(p){
 function pushState(){ for (const p of players.values()) if (p.sid && p.connected) send(p.sid, stateFor(p)); }
 
 /* ---------- Round ---------- */
-let round = null, seq = [], si = 0, pt = 0, T = 0, playing = false, typer = null;
-const REVEAL = 1.9;
+const REVEAL = 2.6;   // seconds the bar takes to show the result before the verdict
 function buildRound(){
-  if (round) round.npcs.forEach(n => disposeActor(n.a));
+  if (round) round.npcs.forEach(n => { if (!n.corpsed) disposeActor(n.a); });
   const pool = shuffle(bankFor(cfg.level).slice()).slice(0, cfg.n);
   const people = shuffle(PRISONERS.slice());
   const items = pool.map(([lvl, row], i) => {
@@ -647,16 +811,17 @@ function buildRound(){
     const opts = shuffle([{s:ok, ok:true, why:'✓ ' + topic}, {s:w1, ok:false, why:'✗ ' + y1}, {s:w2, ok:false, why:'✗ ' + y2}]);
     return {lvl, topic, opts, correct:opts.findIndex(o => o.ok), final:0, counts:[0,0,0], cast:0, who:people[i % people.length]};
   });
-  const bases = shuffle(CHAR_BASES.slice());
+  // women prisoners are Anne, men are Henry, Mako or Sharky (skeletons are already dead!)
+  const menBases = shuffle(['henry','mako','sharky']);
   const npcs = items.map((it, i) => {
-    const base = bases[i % bases.length];
+    const base = it.who.g === 'f' ? 'anne' : menBases[i % menBases.length];
     const a = makeActor(base, {label:`${it.who.name} the ${it.who.role}`, labelColor:'#ffd7c9', unarmed:true, variant:variantFor(base, i + 3 + Math.floor(Math.random()*7))});
     ship.add(a.g);
     const pos = queueSlot(i); a.g.position.copy(pos); a.g.rotation.y = Math.PI/2;
     return {a, mode:'queue', pos, from:null, rescuedAt:null};
   });
   round = {items, npcs, results:[]};
-  shark.userData.mode = 'circle'; play(sharkActor, 'Swim'); clearParts();
+  sharks.forEach(s => { s.mode = 'circle'; play(s.actor, 'Swim'); }); clearParts();
 }
 function sentencesDur(it){ return cfg.read ? Math.max(9, 2.2 + it.opts.reduce((a, o) => a + o.s.split(/\s+/).length*0.42 + 1.4, 0)) : 8; }
 function buildSeq(){
@@ -701,25 +866,26 @@ function enter(){
     const text = `Ahoy, crew! These landlubbers say they're innocent. Each one will tell three versions of their story, but only ONE is proper English. Vote wisely on yer phones! If at least ${cfg.pass}% of ye choose right, they live. If not... the sharks be hungry today!`;
     say('Captain Barbarossa', 'B', text); sfx.parrot();
     // the phase lasts as long as the captain talks: the first prisoner only walks out when he's done
-    const voiceLen = captainLine('captain-intro');
+    const voiceLen = captainLine('captain-intro', pickBuf('captain-intro'));
     if (voiceLen) ph.dur = Math.max(ph.dur, voiceLen + 1.2);
     else if (cfg.read && window.speechSynthesis){
       ph.dur = 60;   // generous until the browser voice reports it finished
-      setTimeout(() => { if (seq[si] !== ph) return; const u = speak(text, {rate:0.95, pitch:0.7}); if (u) u.onend = () => { if (seq[si] === ph) ph.dur = pt + 1; }; else ph.dur = 13; }, 600);
+      setTimeout(() => { if (seq[si] !== ph) return; const u = speak(text, {g:'m', rate:0.95, pitch:0.7}); if (u) u.onend = () => { if (seq[si] === ph) ph.dur = pt + 1; }; else ph.dur = 13; }, 600);
     }
   }
-  if (ph.id === 'walk'){ const n = round.npcs[ph.npc]; n.mode = 'walk'; n.from = n.pos.clone(); say(`${it.who.name} the ${it.who.role}`, it.who.name[0], it.who.plea); speak(it.who.plea, {rate:1}); }
+  if (ph.id === 'walk'){ const n = round.npcs[ph.npc]; n.mode = 'walk'; n.from = n.pos.clone(); say(`${it.who.name} the ${it.who.role}`, it.who.name[0], it.who.plea); speak(it.who.plea, {rate:1.02, g:it.who.g, pitch:(it.who.pitch || 1)*1.08}); if (Math.random() < 0.5) setTimeout(sfx.parrot, 2600); }
   if (ph.id === 'sentences'){
     buildCards(it); $('cards').hidden = false;
     const cards = [...$('cards').children];
-    it.opts.forEach((o, j) => speak(`${'ABC'[j]}. ${o.s}`, {onstart:() => { cards.forEach(c => c.classList.remove('speaking')); cards[j].classList.add('in', 'speaking'); }}));
+    it.opts.forEach((o, j) => speak(`${'ABC'[j]}. ${o.s}`, {g:it.who.g, pitch:it.who.pitch || 1, onstart:() => { cards.forEach(c => c.classList.remove('speaking')); cards[j].classList.add('in', 'speaking'); }}));
   }
   if (ph.id === 'vote'){
     players.forEach(p => { p.vote = null; p.voteT = 0; p.botAt = p.bot ? 2 + Math.random()*(ph.dur*0.6) : 0; });
     $('meter').hidden = false; $('fill').style.width = '0%'; $('fill').classList.remove('pass'); $('fill').style.background = 'var(--gold)';
     $('mark').hidden = true; $('meterLabel').textContent = 'Vote on your phones!'; $('pct').textContent = '';
+    $('meter').classList.remove('judging', 'doomed', 'spared'); $('danger').style.width = '0%';
     [...$('cards').children].forEach(c => c.classList.remove('speaking'));
-    lastTick = -1; sfx.bell();
+    lastTick = -1; sfx.bell2();
   }
   if (ph.id === 'verdict') closeVote(ph);
   if (ph.id === 'summary') showSummary();
@@ -729,6 +895,7 @@ function closeVote(ph){
   const it = round.items[ph.npc], vs = voters();
   it.counts = [0,0,0]; it.cast = 0;
   vs.forEach(p => {
+    p.picks[ph.npc] = p.vote;
     if (p.vote == null) return;
     it.counts[p.vote]++; it.cast++; p.answered++;
     if (p.vote === it.correct){ p.correct++; p.score += 100 + Math.round(50 * Math.max(0, 1 - p.voteT / Math.max(1, seq.find(s => s.id === 'vote' && s.npc === ph.npc).dur))); }
@@ -737,10 +904,11 @@ function closeVote(ph){
   const saved = it.final*100 >= cfg.pass;
   round.results[ph.npc] = saved;
   $('meter').hidden = false; $('mark').hidden = false; $('mark').style.left = cfg.pass + '%'; $('markLbl').textContent = cfg.pass + '%';
+  $('meter').classList.add('judging'); $('meter').classList.remove('doomed', 'spared'); $('danger').style.width = cfg.pass + '%';
   $('meterLabel').textContent = 'Crew got it right'; $('fill').style.background = ''; $('fill').style.width = '0%';
   $('votes').textContent = `${it.cast} of ${vs.length} votes`; $('secs').textContent = '⚓'; $('clock').classList.remove('hurry'); $('ring').setAttribute('stroke-dashoffset', '0');
   const b = $('banner'); b.className = saved ? 'saved' : 'doom';
-  b.innerHTML = saved ? `Saved!<small>${esc(it.who.name)} joins the crew · ${Math.round(it.final*100)}%</small>` : `To the sharks!<small>${Math.round(it.final*100)}% · needed ${cfg.pass}%</small>`;
+  b.innerHTML = saved ? `Saved!<small>${esc(it.who.name)} joins the crew · ${Math.round(it.final*100)}%</small>` : `☠ To the sharks! ☠<small>${Math.round(it.final*100)}% · needed ${cfg.pass}%</small>`;
 }
 function verdictFor(p, k){
   const it = round.items[k];
@@ -748,7 +916,10 @@ function verdictFor(p, k){
 }
 function summaryFor(p){
   const ranked = [...players.values()].sort((a, b) => b.score - a.score);
-  return {rank:ranked.indexOf(p) + 1, of:ranked.length, saved:round.results.filter(Boolean).length};
+  return {rank:ranked.indexOf(p) + 1, of:ranked.length, saved:round.results.filter(Boolean).length, lost:round.results.filter(r => r === false).length,
+    level:cfg.level, pass:cfg.pass,
+    review:round.items.map((it, k) => ({who:`${it.who.name} the ${it.who.role}`, topic:it.topic, lvl:it.lvl, opts:it.opts.map(o => o.s), why:it.opts.map(o => o.why),
+      correct:it.correct, pick:p.picks[k] == null ? null : p.picks[k], saved:round.results[k] === true, pct:Math.round(it.final*100)}))};
 }
 function showSummary(){
   const sv = round.results.filter(Boolean).length, n = round.items.length;
@@ -775,11 +946,11 @@ function startGame(){
   if (!ready) return;
   unlockAudio();
   if (!players.size) { cfg.demo = true; syncDemoCrew(); cfg.demo = false; }
-  players.forEach(p => { p.score = 0; p.correct = 0; p.answered = 0; p.vote = null; });
-  buildRound(); buildSeq(); si = 0; playing = true; enter();
+  players.forEach(p => { p.score = 0; p.correct = 0; p.answered = 0; p.vote = null; p.picks = []; });
+  buildRound(); buildSeq(); si = 0; playing = true; music(); sea(cfg.snd); enter();
 }
 function toLobby(){
-  playing = false; hush(); hideAll(); renderSettings();
+  playing = false; hush(); hideAll(); renderSettings(); music(); sea(cfg.snd);
   if (ready) buildRound();
   syncDemoCrew(); renderHud(); pushState();
 }
@@ -791,14 +962,16 @@ $('toLobby').addEventListener('click', toLobby);
 const parts = [];
 function burst(pos, n, colors, opts){
   for (let i=0;i<n;i++){
-    const m = mesh(opts.confetti ? new THREE.PlaneGeometry(0.18, 0.11) : new THREE.IcosahedronGeometry(0.13 + Math.random()*0.12, 0),
-      B(colors[i % colors.length], {side:THREE.DoubleSide, transparent:true}), pos.x, pos.y, pos.z);
+    const geo = opts.confetti ? new THREE.PlaneGeometry(0.18, 0.11) : opts.drop ? new THREE.SphereGeometry(0.026, 6, 4) : new THREE.IcosahedronGeometry(0.13 + Math.random()*0.12, 0);
+    const m = mesh(geo, B(colors[i % colors.length], {side:THREE.DoubleSide, transparent:true}), pos.x, pos.y, pos.z);
     const a = Math.random()*Math.PI*2, sp = opts.spread*(0.4 + Math.random()*0.6);
-    m.userData = {v:new THREE.Vector3(Math.cos(a)*sp, opts.up*(0.6 + Math.random()*0.6), Math.sin(a)*sp), life:opts.life, max:opts.life, g:opts.g, spin:opts.confetti ? Math.random()*8 : 0};
+    const v = opts.drop ? opts.dir.clone().multiplyScalar(0.8 + Math.random()*0.7).setY(opts.up*(0.7 + Math.random()*0.6)) : new THREE.Vector3(Math.cos(a)*sp, opts.up*(0.6 + Math.random()*0.6), Math.sin(a)*sp);
+    if (opts.drop) m.scale.set(1, 1.6, 1);
+    m.userData = {v, life:opts.life, max:opts.life, g:opts.g, spin:opts.confetti ? Math.random()*8 : 0};
     scene.add(m); parts.push(m);
   }
-  if (!opts.confetti){
-    const r = mesh(new THREE.RingGeometry(0.3, 0.6, 22), B(0xffffff, {transparent:true, side:THREE.DoubleSide}), pos.x, 0.4, pos.z);
+  if (!opts.confetti && !opts.drop){
+    const r = mesh(new THREE.RingGeometry(0.3, 0.6, 22), B(opts.ring || 0xffffff, {transparent:true, side:THREE.DoubleSide}), pos.x, 0.4, pos.z);
     r.rotation.x = -Math.PI/2; r.userData = {ring:true, life:1.4, max:1.4}; scene.add(r); parts.push(r);
   }
 }
@@ -816,14 +989,17 @@ function updateParts(dt){
 const camPos = new THREE.Vector3(30, 9, 46), camLook = new THREE.Vector3(-20, 18, -80);
 const tPos = new THREE.Vector3(), tLook = new THREE.Vector3();
 const HEAD = PLANK_END.y + 1.75;
+let camOverride = null;
 const LOBBY_CAM = [SKULL_ISLE.x + 4, 7.5, SKULL_ISLE.z + 58, SKULL_ISLE.x, 13, SKULL_ISLE.z - 4];
 function camTarget(){
+  if (camOverride){ tPos.set(...camOverride.slice(0, 3)); tLook.set(...camOverride.slice(3)); return 50; }
   const id = playing ? seq[si].id : 'lobby';
   const capHead = CAP_POS.y + 2.1;
   switch (id){
     case 'lobby': { const s = Math.sin(T*0.07); tPos.set(LOBBY_CAM[0] + s*1.5, LOBBY_CAM[1] + Math.sin(T*0.11)*0.4, LOBBY_CAM[2] - s); tLook.set(LOBBY_CAM[3], LOBBY_CAM[4], LOBBY_CAM[5]); return 1.6; }
     case 'summary': { const a = -0.9 + T*0.03; tPos.set(Math.cos(a)*52 + 1, 19, Math.sin(a)*52 + 3); tLook.set(0, 3.5, 1); return 2.2; }
-    case 'approach': tPos.set(0, 8.5, 21); tLook.set(2, 2.6, 0); return 1.0;
+    // from round two on, the camera arrives low over last round's floating bodies: a reminder of what's at stake
+    case 'approach': if (corpses.length){ tPos.set(7, 6.8, 27); tLook.set(1.5, 1.2, 6); } else { tPos.set(0, 8.5, 21); tLook.set(2, 2.6, 0); } return 1.0;
     case 'captain': tPos.set(CAP_POS.x - 1.2, capHead + 0.9, CAP_POS.z + 5.6); tLook.set(CAP_POS.x - 0.3, capHead - 0.35, CAP_POS.z); return 1.5;
     case 'walk': tPos.set(-3.5, 7.5, 15.5); tLook.set(1, 2.2, 3.5); return 1.5;
     case 'sentences': tPos.set(PLANK_X + 2.4, HEAD + 1.0, 4.6); tLook.set(PLANK_X, HEAD - 0.2, PLANK_END.z); return 1.5;
@@ -844,7 +1020,9 @@ function updateNPCs(dt){
   if (!round) return;
   const ph = playing ? seq[si] : {id:'lobby'};
   let qi = 0;
+  const doomNow = ph.id === 'verdict' && round.results[ph.npc] === false && pt - REVEAL > 0.8 && pt - REVEAL < 6;
   round.npcs.forEach((n, i) => {
+    if (n.corpsed) return;
     const a = n.a, g = a.g;
     g.rotation.z = 0; g.rotation.x = 0; g.visible = n.mode !== 'gone';
     if (g.userData.plate) g.userData.plate.visible = !(n.mode === 'plank' && ['sentences','vote','verdict'].includes(ph.id));
@@ -854,7 +1032,9 @@ function updateNPCs(dt){
       const moving = n.pos.distanceTo(target) > 0.08;
       n.pos.lerp(target, 1 - Math.exp(-dt*2.5));
       g.position.copy(n.pos); g.rotation.y = Math.PI/2;
-      play(a, moving ? 'Walk' : 'Idle');
+      // the others in line watch their friend go to the sharks… and sweat
+      play(a, moving ? 'Walk' : doomNow ? 'Duck' : 'Idle');
+      if (doomNow && Math.random() < dt*5) sweat(g);
     } else if (n.mode === 'walk'){
       const k = ph.npc === i && ph.id === 'walk' ? ease(pt/(ph.dur*0.85)) : 1;
       const {p, dir} = pathPoint([n.from, new THREE.Vector3(PLANK_X, DECK, 2.3), PLANK_START, PLANK_END], k);
@@ -865,6 +1045,9 @@ function updateNPCs(dt){
       const fear = ph.id === 'vote' || (ph.id === 'verdict' && ph.npc === i) ? 1 : 0.3;
       g.rotation.z = Math.sin(T*28)*0.03*fear; g.position.x += Math.sin(T*31)*0.02*fear;
       play(a, fear === 1 ? 'No' : 'Idle');
+      // nervous sweat: a little while they talk, buckets while the crew votes
+      const rate = ph.id === 'vote' ? 9 + 8*(1 - Math.max(0, ph.dur - pt)/Math.max(1, ph.dur)) : ph.id === 'verdict' ? 12 : ph.id === 'sentences' ? 2.5 : 0;
+      if (rate && Math.random() < dt*rate) sweat(g, 1 + (Math.random() < 0.3 ? 1 : 0));
       if (ph.id === 'verdict' && ph.npc === i && vt >= 0) n.mode = round.results[i] ? 'saving' : 'falling';
     } else if (n.mode === 'saving'){
       const t = vt < 99 ? vt : 99;
@@ -881,19 +1064,23 @@ function updateNPCs(dt){
     } else if (n.mode === 'falling'){
       const t = vt;
       if (!n.doomed){ n.doomed = true; sfx.doom(); setTimeout(() => captainLine('captain-doom'), 400); }
-      if (t < 1.0){ g.position.copy(PLANK_END); g.rotation.y = Math.PI; play(a, 'HitReact'); }
+      if (!n.screamed && t > 0.85){ n.screamed = true; sfx.scream(round.items[i].who.g === 'f'); }
+      if (t < 1.0){ g.position.copy(PLANK_END); g.rotation.y = Math.PI; play(a, 'HitReact'); if (Math.random() < dt*14) sweat(g, 2); }
       else if (t < 1.85){ const f = (t - 1.0)/0.85; g.position.set(PLANK_X, PLANK_END.y + 0.7*f - 2.9*f*f, PLANK_END.z + 1.3*f); g.rotation.y = Math.PI; g.rotation.x = -f*2.0; play(a, 'Jump'); }
       else {
-        if (!n.splashed){ n.splashed = true; sfx.splash(); burst(SPLASH, 40, [0xffffff, 0xbff6f8, 0x7fe0e6], {spread:2.6, up:6.5, g:14, life:1.4}); setTimeout(sfx.groan, 900); }
-        n.mode = 'gone'; g.visible = false;
+        if (!n.splashed){ n.splashed = true; sfx.splash(); burst(SPLASH, 40, [0xffffff, 0xbff6f8, 0x7fe0e6], {spread:2.6, up:6.5, g:14, life:1.4}); setTimeout(sfx.groan, 1100); }
+        g.visible = false;
+        // …and a moment later what's left of them bobs back up, and stays there
+        if (t > 3.9){ makeCorpse(n, round.items[i].who, false); sfx.splash(); burst(new THREE.Vector3(SPLASH.x, 0.3, SPLASH.z + 0.6), 26, [0xffffff, 0xd01020, 0xbff6f8], {spread:1.4, up:3, g:12, life:1});
+          setTimeout(() => { if (Math.random() < 0.7) shout('Squawk! Shark bait! Shark bait!', {g:'f', pitch:1.9, rate:1.3}); sfx.parrot(); }, 700); }
       }
-      if (t > 1.6 && shark.userData.mode === 'circle'){ shark.userData.mode = 'leap'; shark.userData.s = 0; play(sharkActor, 'Swim_Fast'); }
+      if (t > 1.6 && sharks[0] && sharks[0].mode !== 'leap' && !n.leapt){ n.leapt = true; sharks[0].mode = 'leap'; sharks[0].s = 0; play(sharks[0].actor, 'Swim_Fast'); }
     }
     // a phase skipped with "Skip" must not leave a prisoner stuck mid-animation
     if (ph.npc !== i && ph.npc != null && ph.npc > i){
-      if (n.mode === 'walk' || n.mode === 'plank') n.mode = round.results[i] === false ? 'gone' : round.results[i] ? 'rescued' : n.mode;
+      if (n.mode === 'walk' || n.mode === 'plank'){ if (round.results[i] === false) return makeCorpse(n, round.items[i].who, true); if (round.results[i]) n.mode = 'rescued'; }
       if (n.mode === 'saving'){ n.mode = 'rescued'; n.rescuedAt = rescueSpot(round.results.slice(0, i).filter(Boolean).length); }
-      if (n.mode === 'falling'){ n.mode = 'gone'; }
+      if (n.mode === 'falling' || (n.mode === 'gone' && round.results[i] === false)) return makeCorpse(n, round.items[i].who, true);
       if (n.mode === 'rescued' && !n.rescuedAt) n.rescuedAt = rescueSpot(round.results.slice(0, i).filter(Boolean).length);
     }
   });
@@ -905,15 +1092,26 @@ function updateCrew(dt){
   for (const p of players.values()){
     const c = p.actor; if (!c) continue;
     placeActor(p);
-    const spot = spotOf(p);
-    if (p.dropT < 1){ p.dropT = Math.min(1, p.dropT + dt*1.4); const k = p.dropT; c.g.position.set(spot.x, spot.y + 6*(1-k)*(1-k), spot.z); if (k >= 1){ burst(new THREE.Vector3(spot.x, spot.y + 0.3, spot.z), 22, [0xf0b43a,0xffffff,0x3a86ff], {confetti:true, spread:1.6, up:3, g:6, life:1.4}); } }
+    let spot = spotOf(p);
+    if (p.where === 'beach'){
+      // slide to the new place when pirates join or leave, and grow / shrink with the size of the crew
+      const b = beach.get(p), want = b ? b.scale : 2;
+      if (!p.beachPos) p.beachPos = spot.clone();
+      p.beachPos.lerp(spot, 1 - Math.exp(-dt*3)); spot = p.beachPos;
+      p.size += (want - p.size) * (1 - Math.exp(-dt*3)); c.g.scale.setScalar(p.size);
+      const pl = c.g.userData.plate; if (pl){ const w = Math.min(4.4, 1.25*want + 1.5); pl.scale.set(w/p.size, w/p.size/5, 1); pl.position.y = 1.6*CHAR_S + 0.1 + 0.5/p.size; }
+    }
+    if (p.dropT < 1){ p.dropT = Math.min(1, p.dropT + dt*1.4); const k = p.dropT; c.g.position.set(spot.x, spot.y + 8*(1-k)*(1-k), spot.z); if (k >= 1){ burst(new THREE.Vector3(spot.x, spot.y + 0.3, spot.z), 26, [0xf0b43a,0xffffff,0x3a86ff], {confetti:true, spread:1.6*(p.size || 1), up:3, g:6, life:1.4}); } }
     else c.g.position.copy(spot);
     let anim = 'Idle';
-    if (p.where === 'beach') anim = p.dropT < 1 ? 'Jump' : (Math.floor(T/4 + p.spot*0.7) % 4 === 0) ? 'Wave' : 'Idle';
+    if (p.where === 'beach') anim = p.dropT < 1 ? 'Jump' : (Math.floor(T/4 + p.spot*0.7) % 5 === 0) ? 'Wave' : 'Idle';
+    const greeting = p.ahoyT != null && T - p.ahoyT < 1.9;
+    if (greeting) anim = 'Wave';
+    if (c.g.userData.bubble) c.g.userData.bubble.visible = greeting;
     if (ph.id === 'vote' && p.vote != null) anim = 'Yes';
     if (ph.id === 'verdict' && vt > 0){ if (saved) anim = p.spot % 2 ? 'Yes' : 'Wave'; else anim = 'No'; }
     play(c, anim);
-    const look = p.where === 'beach' ? 0.1 + Math.sin(p.spot*1.7)*0.18 : (ph.id === 'captain' || ph.id === 'approach') ? 1.35 : 0.5;
+    const look = p.where === 'beach' ? 0.12 + Math.sin(p.joinN*1.7)*0.12 : (ph.id === 'captain' || ph.id === 'approach') ? 1.35 : 0.5;
     c.g.rotation.y += (look - c.g.rotation.y) * 0.08;
     c.g.traverse(o => { if (o.isSprite) o.material.opacity = p.connected ? 1 : 0.4; });
   }
@@ -928,23 +1126,129 @@ function updateCrew(dt){
     if (captain.g.userData.plate) captain.g.userData.plate.visible = !talking;
   }
 }
-function updateShark(dt){
-  const u = shark.userData;
-  if (u.mode === 'circle'){
-    u.a += dt*0.7;
-    const vx = -Math.sin(u.a), vz = Math.cos(u.a);
-    const x = SHARK_C.x + Math.cos(u.a)*SHARK_R, z = SHARK_C.z + Math.sin(u.a)*SHARK_R;
-    shark.position.set(x, waveHeight(x, z, T) - 0.35, z);
-    shark.rotation.set(0, Math.atan2(vx, vz), 0); sharkPitch.rotation.set(0, 0, -0.2);
-  } else {
-    u.s += dt/1.4; const s = Math.min(1, u.s);
-    const z0 = 15.8, z1 = 6.6, h = 4.2;
-    shark.position.set(PLANK_X, -1.6 + h*4*s*(1-s), z0 + (z1 - z0)*s);
-    shark.rotation.set(0, Math.PI, 0);
-    sharkPitch.rotation.set(-Math.atan(h*4*(1-2*s)/(z0 - z1)), 0, 0);
-    if (s > 0.3 && sharkActor && sharkActor.cur !== 'Swim_Bite'){ play(sharkActor, 'Swim_Bite'); sfx.bite(); }
-    if (!u.sp1 && s > 0.06){ u.sp1 = true; burst(new THREE.Vector3(PLANK_X, 0.2, z0 - 0.4), 30, [0xffffff,0xbff6f8], {spread:2, up:5, g:14, life:1.2}); }
-    if (s >= 1){ u.mode = 'circle'; u.a = -Math.PI/2 - 0.6; u.sp1 = false; play(sharkActor, 'Swim'); sfx.splash(); burst(new THREE.Vector3(PLANK_X, 0.2, z1 + 0.3), 34, [0xffffff,0xbff6f8], {spread:2.2, up:5, g:14, life:1.3}); }
+function updateSharks(dt){
+  sharks.forEach((u, i) => {
+    if (u.mode === 'leap'){
+      u.s += dt/1.4; const s = Math.min(1, u.s);
+      const z0 = 15.8, z1 = 6.6, h = 4.2;
+      u.pos.set(PLANK_X, -1.6 + h*4*s*(1-s), z0 + (z1 - z0)*s); u.g.position.copy(u.pos);
+      u.yaw = Math.PI; u.g.rotation.set(0, Math.PI, 0);
+      u.pitch.rotation.set(-Math.atan(h*4*(1-2*s)/(z0 - z1)), 0, 0);
+      if (s > 0.3 && u.actor.cur !== 'Swim_Bite'){ play(u.actor, 'Swim_Bite'); sfx.bite(); chomp(); }
+      if (!u.sp1 && s > 0.06){ u.sp1 = true; burst(new THREE.Vector3(PLANK_X, 0.2, z0 - 0.4), 30, [0xffffff,0xbff6f8], {spread:2, up:5, g:14, life:1.2}); }
+      if (s >= 1){ u.mode = 'circle'; u.a = -Math.PI/2 - 0.6; u.sp1 = false; play(u.actor, 'Swim'); sfx.splash();
+        burst(new THREE.Vector3(PLANK_X, 0.2, z1 + 0.3), 34, [0xffffff,0xbff6f8,0xd01020], {spread:2.2, up:5, g:14, life:1.3}); }
+      return;
+    }
+    if (u.mode === 'frenzy'){
+      // thrash around the splash: fins, bites and blood
+      u.s += dt;
+      const k = u.s*2.2 + i;
+      u.target.set(SPLASH.x + Math.cos(k)*1.6, 0, SPLASH.z + 1.2 + Math.sin(k*1.3)*1.4);
+      u.target.y = seaLevel(u.target.x, u.target.z, T) - 0.25 + Math.sin(u.s*9)*0.25;
+      if (u.s > 3.2){ u.mode = 'circle'; play(u.actor, 'Swim'); }
+    } else {
+      u.a += dt*u.w;
+      const x = SHARK_C.x + Math.cos(u.a)*u.r, z = SHARK_C.z + 0.8*i + Math.sin(u.a)*u.r*0.85;
+      u.target.set(x, seaLevel(x, z, T) - 0.35, z);
+    }
+    const before = u.pos.clone();
+    if (u.pos.lengthSq() === 0) u.pos.copy(u.target);
+    u.pos.lerp(u.target, 1 - Math.exp(-dt*(u.mode === 'frenzy' ? 4 : 2.2)));
+    const dx = u.pos.x - before.x, dz = u.pos.z - before.z;
+    if (dx*dx + dz*dz > 1e-6){ const want = Math.atan2(dx, dz); let d = want - u.yaw; d = Math.atan2(Math.sin(d), Math.cos(d)); u.yaw += d*Math.min(1, dt*6); }
+    u.g.position.copy(u.pos); u.g.rotation.set(0, u.yaw + (u.mode === 'frenzy' ? Math.sin(T*16 + i)*0.35 : 0), 0);
+    u.pitch.rotation.set(0, 0, u.mode === 'frenzy' ? Math.sin(T*11 + i)*0.35 : -0.2*Math.sign(u.w));
+  });
+}
+// The bite: blood fountain, a red stain on the sea, bubbles, and the other two sharks rush in
+function chomp(){
+  const at = new THREE.Vector3(PLANK_X, 0.6, SPLASH.z - 0.6);
+  burst(at, 70, [0xb3000c, 0x7a0008, 0xe0182a, 0xff3b3b], {spread:2.8, up:7.5, g:13, life:1.7, ring:0xb3000c});
+  setTimeout(() => burst(new THREE.Vector3(PLANK_X + 0.6, 0.4, SPLASH.z + 0.6), 40, [0xb3000c, 0x8e0010, 0xd8202c], {spread:2, up:5, g:12, life:1.4, ring:0x8e0010}), 450);
+  bloodPool(SPLASH.x, SPLASH.z + 0.4, 3.6, 2.5);
+  setTimeout(sfx.gurgle, 700);
+  sharks.forEach((s, i) => { if (i && s.mode === 'circle'){ s.mode = 'frenzy'; s.s = 0; play(s.actor, i === 1 ? 'Swim_Bite' : 'Swim_Fast'); } });
+}
+
+/* ---------- Blood on the water (follows the waves) ---------- */
+const pools = [];
+let poolTex = null;
+function poolTexture(){
+  if (poolTex) return poolTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  for (let i=0;i<14;i++){
+    const a = Math.random()*Math.PI*2, r = i ? 18 + Math.random()*30 : 0, cx = 64 + Math.cos(a)*r, cy = 64 + Math.sin(a)*r, rad = i ? 14 + Math.random()*20 : 46;
+    const g = x.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    g.addColorStop(0, 'rgba(150,0,10,0.95)'); g.addColorStop(0.6, 'rgba(120,0,8,0.6)'); g.addColorStop(1, 'rgba(110,0,8,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(cx, cy, rad, 0, Math.PI*2); x.fill();
+  }
+  poolTex = new THREE.CanvasTexture(c); poolTex.encoding = THREE.sRGBEncoding; return poolTex;
+}
+function bloodPool(x, z, size, grow=2, follow=null){
+  const geo = new THREE.PlaneGeometry(2, 2, 8, 8).rotateX(-Math.PI/2);
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({map:poolTexture(), transparent:true, depthWrite:false, opacity:0.9, fog:true}));
+  m.renderOrder = 2; m.frustumCulled = false; scene.add(m);
+  const p = {m, geo, base:Float32Array.from(geo.attributes.position.array), x, z, size, grow, t:0, follow, rot:Math.random()*6};
+  pools.push(p);
+  while (pools.length > 18){ const o = pools.shift(); scene.remove(o.m); o.geo.dispose(); o.m.material.dispose(); }
+  return p;
+}
+function updatePools(dt){
+  for (const p of pools){
+    p.t += dt;
+    if (p.follow){ p.x = p.follow.pos.x; p.z = p.follow.pos.z; }
+    const s = p.size * Math.min(1, 0.25 + p.t/p.grow) * (p.follow ? 1 : 1 + Math.min(0.5, p.t*0.01));
+    p.m.material.opacity = p.follow ? 0.75 : Math.max(0.42, 0.9 - p.t*0.02);
+    const a = p.geo.attributes.position.array, c = Math.cos(p.rot), sn = Math.sin(p.rot);
+    for (let i=0;i<a.length;i+=3){
+      const bx = p.base[i]*s, bz = p.base[i+2]*s, wx = p.x + bx*c - bz*sn, wz = p.z + bx*sn + bz*c;
+      a[i] = wx; a[i+2] = wz; a[i+1] = seaLevel(wx, wz, T) + 0.08;
+    }
+    p.geo.attributes.position.needsUpdate = true;
+  }
+}
+
+/* ---------- Floating bodies: they stay in the water, round after round ---------- */
+const corpses = [];
+const CORPSE_SLOTS = [[0.6,12.4],[4.6,13.6],[-2.4,14.2],[7.4,11.8],[2.4,16.2],[-5.2,12.6],[9.4,15.2],[-0.8,17.6],[6.2,18.0],[-7.2,15.6],[11.2,12.4],[-3.6,19.0],[3.6,20.2],[11.6,18.2]];
+let corpseN = 0;
+function makeCorpse(n, who, instant){
+  if (n.corpsed) return;
+  n.corpsed = true; n.mode = 'gone';
+  const a = n.a, g = a.g, slot = CORPSE_SLOTS[corpseN++ % CORPSE_SLOTS.length];
+  ship.remove(g); scene.add(g); g.visible = true; g.rotation.set(0, 0, 0); g.scale.setScalar(1);
+  if (g.userData.plate){ g.remove(g.userData.plate); g.userData.plate.material.map.dispose(); g.userData.plate.material.dispose(); }
+  const pl = nameplate('☠ ' + who.name, '#ff9b8c'); pl.scale.set(1.7, 0.34, 1); pl.position.y = 1.15; g.add(pl); g.userData.plate = pl;
+  a.mixer.stopAllAction(); a.cur = null; play(a, 'Death', 0); if (instant) a.mixer.update(5);
+  const c = {a, pos:instant ? new THREE.Vector3(slot[0], 0, slot[1]) : new THREE.Vector3(SPLASH.x, 0, SPLASH.z + 0.6), to:new THREE.Vector3(slot[0], 0, slot[1]),
+    sink:0.12, yaw:Math.random()*Math.PI*2, spin:(Math.random() - 0.5)*0.12, rise:instant ? 1 : 0, ph:Math.random()*6, name:who.name};
+  corpses.push(c);
+  c.pool = bloodPool(c.pos.x, c.pos.z, 1.5, 1.5, c);
+  while (corpses.length > CORPSE_SLOTS.length){ const o = corpses.shift(); disposeActor(o.a); }
+}
+function updateCorpses(dt){
+  const ph = playing ? seq[si] : {id:'lobby'};
+  const hidePlates = ['captain','sentences','vote'].includes(ph.id) || (ph.id === 'verdict' && pt < REVEAL);
+  for (const c of corpses){
+    c.rise = Math.min(1, c.rise + dt*0.7);
+    c.pos.lerp(c.to, 1 - Math.exp(-dt*0.35));
+    c.yaw += c.spin*dt;
+    const h = seaLevel(c.pos.x, c.pos.z, T);
+    const g = c.a.g;
+    g.position.set(c.pos.x, h - c.sink - (1 - c.rise)*1.6, c.pos.z);
+    g.rotation.set(Math.sin(T*1.3 + c.ph)*0.08, c.yaw, Math.sin(T*1.1 + c.ph)*0.1);
+    if (g.userData.plate) g.userData.plate.visible = !hidePlates && c.rise > 0.9;
+  }
+}
+// drops of sweat flying off a scared prisoner's head
+const _v = new THREE.Vector3();
+function sweat(g, n=1){
+  for (let i=0;i<n;i++){
+    const side = Math.random() < 0.5 ? -1 : 1;
+    g.localToWorld(_v.set(side*(0.22 + Math.random()*0.12), 1.75 + Math.random()*0.25, 0.12 + Math.random()*0.1));
+    const o = g.localToWorld(new THREE.Vector3(0, 1.8, 0)), dir = _v.clone().sub(o).setY(0).normalize();
+    burst(_v, 1, [0xd6f6ff, 0x9fe3ff], {drop:true, dir, spread:0, up:1.3, g:9, life:0.8});
   }
 }
 
@@ -966,7 +1270,7 @@ function updateVote(){
     $('secs').textContent = secs;
     $('ring').setAttribute('stroke-dashoffset', (RING * (1 - left/cfg.t)).toFixed(1));
     $('clock').classList.toggle('hurry', left <= 5);
-    if (left <= 5 && secs !== lastTick && secs > 0){ lastTick = secs; sfx.tick(secs === 1); }
+    if (left <= 5 && secs !== lastTick && secs > 0){ lastTick = secs; sfx.tick(secs === 1); countdown(secs); }
     $('fill').style.width = (vs.length ? cast/vs.length*100 : 0).toFixed(1) + '%';
     $('votes').textContent = `${cast} of ${vs.length} votes`;
   }
@@ -976,6 +1280,9 @@ function updateVote(){
     $('fill').style.width = (Math.max(0, v)*100).toFixed(1) + '%';
     $('fill').classList.toggle('pass', v*100 >= cfg.pass);
     $('pct').textContent = Math.round(Math.max(0, v)*100) + '%';
+    // the skull rattles while the bar is in the red, and grins when the crew fails
+    $('meter').classList.toggle('doomed', k >= 1 && it.final*100 < cfg.pass);
+    $('meter').classList.toggle('spared', k >= 1 && it.final*100 >= cfg.pass);
     if (pt >= REVEAL && $('banner').hidden && !it.bannerShown){
       it.bannerShown = true; $('banner').hidden = false; $('meter').hidden = true;
       const cards = [...$('cards').children];
@@ -992,14 +1299,15 @@ function update(dt){
   if (playing && pt >= seq[si].dur) next();
   seaMat.uniforms.uTime.value = T;
   // ship rides the waves
+  // the ship rocks with the swell; the water right at the hull is calm, so it only bobs a little
   const hb = waveHeight(-8, 0, T), hs = waveHeight(9, 0, T), hl = waveHeight(0, -3, T), hr = waveHeight(0, 3, T);
-  ship.position.y = (hb + hs + hl + hr) * 0.25 * 0.7;
-  ship.rotation.z = Math.atan2(hb - hs, 17) * 0.7;
-  ship.rotation.x = Math.atan2(hr - hl, 6) * 0.4;
+  ship.position.y = (hb + hs + hl + hr) * 0.25 * 0.3 - 0.05;
+  ship.rotation.z = Math.atan2(hb - hs, 17) * 0.55;
+  ship.rotation.x = Math.atan2(hr - hl, 6) * 0.3;
   if (navy){ navy.position.x = -200 + ((T*1.4) % 400); navy.position.y = -1.2 + waveHeight(navy.position.x, navy.position.z, T)*0.6; }
   updateFlag(T);
   mixers.forEach(m => m.update(dt));
-  updateNPCs(dt); updateCrew(dt); updateShark(dt); updateParts(dt); updateVote();
+  updateNPCs(dt); updateCrew(dt); updateSharks(dt); updateCorpses(dt); updatePools(dt); updateParts(dt); updateVote();
   const k = camTarget();
   camPos.lerp(tPos, 1 - Math.exp(-dt*k)); camLook.lerp(tLook, 1 - Math.exp(-dt*k*1.2));
   camera.position.copy(camPos); camera.lookAt(camLook);
@@ -1022,5 +1330,5 @@ loadAll().then(() => {
   window.__ready = true;
 });
 window.__debug = { go(id, n){ const i = seq.findIndex(s => s.id === id && (n == null || s.npc === n)); if (i >= 0){ si = i; enter(); } }, round:() => round, players:() => players,
-  cam(a){ LOBBY_CAM.splice(0, 6, ...a); camPos.set(a[0], a[1], a[2]); camLook.set(a[3], a[4], a[5]); }, tick(sec){ for (let t=0; t<sec; t+=0.05) update(0.05); renderer.render(scene, camera); }, phase:() => seq[si] && seq[si].id, dur:() => seq[si] && seq[si].dur };
+  cam(a){ LOBBY_CAM.splice(0, 6, ...a); camPos.set(a[0], a[1], a[2]); camLook.set(a[3], a[4], a[5]); }, tick(sec){ for (let t=0; t<sec; t+=0.05) update(0.05); renderer.render(scene, camera); }, phase:() => seq[si] && seq[si].id, view(a){ camOverride = a; }, corpses:() => corpses.length, dur:() => seq[si] && seq[si].dur };
 })();

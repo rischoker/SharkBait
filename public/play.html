@@ -31,6 +31,11 @@
     <input id="nameIn" maxlength="14" autocomplete="nickname" placeholder="Your name">
     <div class="bases" id="bases" role="radiogroup" aria-label="Character"></div>
     <div class="colors" id="colors" role="radiogroup" aria-label="Clothes color"></div>
+    <label>Your "Ahoy!" voice</label>
+    <div class="voices" id="voices" role="radiogroup" aria-label="Voice">
+      <button type="button" role="radio" data-v="m" aria-checked="true">♂ Male</button>
+      <button type="button" role="radio" data-v="f" aria-checked="false">♀ Female</button>
+    </div>
     <button class="btn big" id="joinBtn" type="button">Climb aboard!</button>
   </section>
 
@@ -39,6 +44,7 @@
     <h2 id="waitTitle">You're aboard!</h2>
     <p id="waitMsg">Look at the big screen. Voting opens when a prisoner walks the plank.</p>
     <ol id="preview" class="preview-list" hidden></ol>
+    <button class="btn ahoy" id="ahoyBtn" type="button">Ahoy! 🏴‍☠️</button>
     <button class="btn ghost" id="editBtn" type="button">Change pirate</button>
   </section>
 
@@ -56,14 +62,23 @@
   </section>
 
   <section id="sSummary" class="card" hidden>
-    <h1>Round over!</h1>
+    <div class="rankcard" id="rankCard">
+      <div class="rankicon" id="rankIcon">⚓</div>
+      <div><small>Your pirate rank</small><h1 id="rankTitle">First Mate</h1><p id="rankLine"></p></div>
+    </div>
     <div class="stats">
-      <div><b id="sumCorrect">0</b><span>right answers</span></div>
+      <div><b id="sumAcc">0%</b><span>accuracy</span></div>
       <div><b id="sumScore">0</b><span>points</span></div>
       <div><b id="sumRank">–</b><span>place</span></div>
     </div>
     <p id="sumMsg"></p>
+    <div class="fb" id="fb"></div>
+    <h2>Prisoner by prisoner</h2>
+    <div class="rev" id="rev"></div>
+    <button class="btn big" id="saveBtn" type="button">Save my review 📜</button>
+    <p class="hint" id="saveMsg">Saves an image of this review to your phone.</p>
   </section>
+
 </main>
 
 <script src="/socket.io/socket.io.js"></script>

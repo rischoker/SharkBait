@@ -18,7 +18,7 @@ A classroom EFL game for the projector. Prisoners walk the plank one by one and 
 
 Settings in the lobby: level (A1–C1 or Mixed), number of prisoners, voting time, score needed, captain's intro, sound, read aloud, and a demo crew of bots for testing without phones.
 
-The sentence bank is in `public/bank.js` (24 trios per level). Add rows freely; the lobby counts them.
+The sentence bank is in `public/bank.js` (40 trios per level). Add rows freely; the lobby counts them.
 
 ## Network (Render)
 
@@ -39,25 +39,28 @@ Run locally: `npm install && npm run dev`, then open `http://localhost:3000`.
 
 ## Sounds (ElevenLabs)
 
-The game plays these files from `public/assets/audio/` if they exist, and falls back to simple synth sounds if they don't:
+Every `.mp3` in `public/assets/audio/` is picked up automatically (the server lists the folder). Takes of the same sound share a name with a number: `splash.mp3`, `splash-2.mp3`, `splash-3.mp3`… and a random one plays each time, so every game sounds a little different. To add a take, just drop the file in with the next number.
 
-| File | What it is |
+| Name | What it is |
 |---|---|
-| `sea-loop.mp3` | waves against the hull (loops in the background) |
-| `splash.mp3` | prisoner falls into the sea |
-| `bite.mp3` | shark bite |
-| `cheer.mp3` | crew cheers (saved) |
-| `groan.mp3` | crew groans (sharks) |
-| `parrot.mp3` | Ernest the parrot |
-| `fanfare.mp3` | saved sting |
-| `doom.mp3` | sharks sting |
-| `bell.mp3` | a pirate joins / voting opens |
-| `tick.mp3` | last 5 seconds of the vote |
-| `captain-intro.mp3` | Captain's rules speech |
-| `captain-saved.mp3` | "Well spoken! Welcome to the crew, matey!" |
-| `captain-doom.mp3` | "Walk the plank! Feed the sharks!" |
+| `lobby-song` | music while the crew gathers (fades out when the ship sets sail) |
+| `sea-loop` | waves against the hull |
+| `splash`, `bite`, `cheer`, `groan`, `fanfare`, `doom` | plank, shark and crew reactions |
+| `parrot` | Ernest the parrot (played at different pitches) |
+| `bell` | voting opens (plays as a double clang) |
+| `tick` | last 5 seconds of the vote |
+| `captain-intro`, `captain-saved`, `captain-doom` | Captain Barbarossa's lines |
+| `ahoy-m` | a pirate joins or taps **Ahoy!** on the phone (male voice) |
 
-They were generated in the ElevenLabs flow **Shark Bait – sounds**: pick your favorite take of each, download it as MP3 and drop it in that folder with the name above.
+Optional files the game already knows about (until they exist it uses the browser's voices or synth sounds):
+
+| Name | What it is |
+|---|---|
+| `ahoy-f` | female "Ahoy!" |
+| `scream-m`, `scream-f` | prisoner screams when pushed off the plank |
+| `count5` … `count1` | the captain counting down the last 5 seconds |
+
+Prisoners read their pleas and sentences with the computer's English voices: women with a female voice, men with a male one.
 
 ## Credits
 

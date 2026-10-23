@@ -61,3 +61,37 @@ input:focus{outline:3px solid var(--gold);outline-offset:1px}
 .stats div{background:rgba(42,22,11,.08);border-radius:12px;padding:10px 4px}
 .stats b{display:block;font-size:34px;line-height:1}
 .stats span{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--rope)}
+/* "Ahoy!" voice and button */
+.voices{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.voices button{padding:10px;border-radius:12px;border:3px solid transparent;background:rgba(42,22,11,.08);font:800 18px var(--body);color:var(--ink)}
+.voices button[aria-checked="true"]{border-color:var(--ink);background:#fff3d2}
+.btn.ahoy{font-family:var(--display);font-weight:400;font-size:34px;background:var(--blood);color:var(--parch);text-shadow:0 2px 0 var(--ink)}
+.btn.ahoy:disabled{opacity:.7}
+/* review */
+.rankcard{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;padding:12px;border-radius:14px;background:#fff8e6;border:3px solid var(--ok)}
+.rankcard.fail{border-color:var(--blood)}
+.rankicon{font-size:58px;line-height:1}
+.rankcard small{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--rope)}
+.rankcard h1{font-size:36px}
+.rankcard.pass h1{color:var(--ok)} .rankcard.fail h1{color:var(--blood)}
+.rankcard p{font-size:15px;color:var(--rope)}
+.fb{display:grid;gap:8px}
+.fb > div{background:#fff8e6;border-radius:12px;padding:10px 12px;border-left:6px solid var(--rope)}
+.fb .good{border-color:var(--ok)} .fb .bad{border-color:var(--blood)}
+.fb h3{margin:0 0 4px;font-family:var(--display);font-weight:400;font-size:24px}
+.fb ul{margin:0;padding-left:20px;display:grid;gap:4px;font-size:16px;line-height:1.3}
+.rev{display:grid;gap:10px}
+.ri{background:#fff8e6;border-radius:12px;padding:10px 12px;border:3px solid var(--rope);display:grid;gap:4px}
+.ri.ok{border-color:var(--ok)} .ri.ko,.ri.miss{border-color:var(--blood)}
+.ri header{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.ri header b{font-size:17px}
+.fate{font-size:13px;font-weight:800;white-space:nowrap}
+.fate.saved{color:var(--ok)} .fate.eaten{color:var(--blood)}
+.ri small{font-size:13px;color:var(--rope)}
+.ri ul{margin:2px 0 0;padding:0;list-style:none;display:grid;gap:4px}
+.ri li{display:grid;grid-template-columns:20px 1fr;gap:4px;font-size:16px;line-height:1.3;color:#6b5a48}
+.ri li i{font-style:normal;font-weight:800}
+.ri li.right{color:var(--ok);font-weight:800} .ri li.mine{color:var(--blood);font-weight:800}
+.ri li em{display:block;font-style:normal;font-size:14px;color:var(--rope);font-weight:700}
+.ri li u{text-decoration:none;font-size:12px;letter-spacing:.04em;text-transform:uppercase;background:rgba(42,22,11,.1);border-radius:6px;padding:0 5px;margin-left:4px;white-space:nowrap}
+.nov{font-size:15px;color:var(--blood)}
