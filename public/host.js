@@ -143,6 +143,19 @@ const sfx = {
   gurgle: () => gurgle(),
 };
 let seaSrc = null, seaGain = null, seaSynth = null;
+// MP3 files carry a few milliseconds of encoder silence at both ends, which clicks every time a loop restarts.
+// Cut that off and blend the end of the sound into its beginning, so the loop has no seam at all.
+function seamless(buf, fade=0.6){
+  const sr = buf.sampleRate, cut = Math.floor(0.08*sr), F = Math.floor(fade*sr);
+  const len = buf.length - 2*cut - F; if (len <= F) return buf;
+  const out = actx.createBuffer(buf.numberOfChannels, len, sr);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++){
+    const src = buf.getChannelData(ch), dst = out.getChannelData(ch);
+    for (let i = 0; i < len; i++) dst[i] = src[cut + i];
+    for (let i = 0; i < F; i++){ const t = i/F; dst[i] = dst[i]*Math.sin(t*Math.PI/2) + src[cut + len + i]*Math.cos(t*Math.PI/2); }
+  }
+  return out;
+}
 function sea(on){
   if (!actx) return;
   if (!on){ if (seaGain) seaGain.gain.setTargetAtTime(0, actx.currentTime, 0.4); return; }
@@ -150,7 +163,7 @@ function sea(on){
   seaGain.gain.setTargetAtTime(playing ? 0.32 : 0.16, actx.currentTime, 0.6);
   if (has('sea-loop')){
     if (seaSynth){ try { seaSynth.stop(); } catch(e){} seaSynth = null; }
-    if (!seaSrc){ const b = SFX['sea-loop'][0]; seaSrc = actx.createBufferSource(); seaSrc.buffer = b; seaSrc.loop = true; seaSrc.loopStart = 0.06; seaSrc.loopEnd = b.duration - 0.06; seaSrc.connect(seaGain); seaSrc.start(); }
+    if (!seaSrc){ seaSrc = actx.createBufferSource(); seaSrc.buffer = seamless(SFX['sea-loop'][0]); seaSrc.loop = true; seaSrc.connect(seaGain); seaSrc.start(); }
   } else if (!seaSynth){
     // soft brown-noise surf until the ElevenLabs loop is loaded
     const len = actx.sampleRate*4, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0); let last = 0;
@@ -166,7 +179,7 @@ function music(){
   const want = cfg.snd && !playing;
   if (!songGain){ songGain = actx.createGain(); songGain.gain.value = 0; songGain.connect(master); }
   if (want && !songSrc && actx.state === 'running'){
-    songSrc = actx.createBufferSource(); songSrc.buffer = SFX['lobby-song'][0]; songSrc.loop = true; songSrc.connect(songGain); songSrc.start();
+    songSrc = actx.createBufferSource(); songSrc.buffer = seamless(SFX['lobby-song'][0], 1.5); songSrc.loop = true; songSrc.connect(songGain); songSrc.start();
   }
   songGain.gain.cancelScheduledValues(actx.currentTime);
   songGain.gain.setTargetAtTime(want ? 0.42 : 0, actx.currentTime, want ? 0.8 : 0.6);
