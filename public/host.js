@@ -466,7 +466,7 @@ function play(a, name, fade=0.22){
 
 /* ---------- World ---------- */
 const ship = new THREE.Group(); scene.add(ship);
-const SHIP_S = 2.2, SHIP_Y = -0.66;
+const SHIP_S = 2.2, SHIP_Y = 0.55;   // gun ports sit well above the waterline
 const DECK = 1.0*SHIP_S + SHIP_Y, FORE = 1.5*SHIP_S + SHIP_Y, QUARTER = 1.95*SHIP_S + SHIP_Y;
 const PLANK_X = 1.8;
 const PLANK_START = new THREE.Vector3(PLANK_X, DECK, 3.4), PLANK_END = new THREE.Vector3(PLANK_X, DECK + 0.14, 8.7);
